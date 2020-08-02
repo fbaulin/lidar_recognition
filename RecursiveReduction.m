@@ -13,6 +13,7 @@ classdef RecursiveReduction < handle
     
     properties(Hidden=true)
         upd = true  % обновить метрики на текущем расчете
+        alien_mask
     end
     
     methods
@@ -35,10 +36,14 @@ classdef RecursiveReduction < handle
         % obj_weight
             obj.fvs = fvs;
             dim_fv = size(fvs,2);            % размерность ВП
-            obj.feat_map = zeros(1,dim_fv);
+            obj.feat_map = zeros(1,dim_fv,'single');
             obj.rhos_sqr = zeros(size(fvs,1),'like',fvs);
             obj.targets = targets;
             [~, ~, obj.targets_ids] = unique(targets);        % преобразовать имена в id-номера
+            obj.alien_mask = and(...
+                obj.targets_ids~=obj.targets_ids.',...
+                triu(ones(size(obj.targets_ids,1),'logical'),1)); % маска расчета метрик
+            
             kwargs = KeywordArguments(...
                 'dimensions',1:dim_fv, ...          % исследуемые размерности
                 'reduction_type', 'none',...        % исследуемые размерности
@@ -213,27 +218,21 @@ classdef RecursiveReduction < handle
         %   n_min_ratio - доля метрик, по которым считается величина метрики (<1)
         %   w_rep       - коэффициенты репликации
             rhos = obj.get_metrics(t_map);              % апдейт метрик
-            n_samples = size(obj.fvs, 1);               % число объектов
-            alien_mask = and(...
-                obj.targets_ids~=obj.targets_ids.',...
-                triu(ones(n_samples,'logical'),1));
-            rhos = sort(...
-                rhos(alien_mask),...
-                'ascend');        % получение массива метрик с использованием треугольной матрицы
-            % ПЕРЕСЧЕТ ИЗ ДОЛИ ОБЩЕГО ЧИСЛА МЕТРИК В ДОЛЮ ЧУЖИХ
-            n_rho_index = floor(numel(alien_mask)*n_min_ratio);
-%             n_rho_index = floor(length(rhos)*n_min_ratio);
+%             n_samples = size(obj.fvs, 1);               % число объектов
+%             alien_mask = and(...
+%                 obj.targets_ids~=obj.targets_ids.',...
+%                 triu(ones(n_samples,'logical'),1));
+            rhos = sort( rhos(obj.alien_mask), 'ascend');  % получение массива метрик с использованием треугольной матрицы
+%             n_rho_index = floor(numel(alien_mask)*n_min_ratio); % ПЕРЕСЧЕТ ИЗ ДОЛИ ОБЩЕГО ЧИСЛА МЕТРИК В ДОЛЮ ЧУЖИХ
+            n_rho_index = floor(length(rhos)*n_min_ratio);
 %             space_q = mean(rhos(1:n_rho_index));        % поиск n-ной метрики
             space_q = rhos(n_rho_index);        % поиск n-ной метрики
         end
         
         function space_q = buryi(obj, t_map)
             rhos = obj.get_metrics(t_map);      % апдейт метрик
-            n_samples = size(obj.fvs, 1);       % число объектов
-            alien_mask = and(...
-                obj.targets_ids~=obj.targets_ids.',...
-                triu(ones(n_samples,'logical'),1));
-            space_q = min(rhos(alien_mask));
+%             n_samples = size(obj.fvs, 1);       % число объектов
+            space_q = min(rhos(obj.alien_mask));
             % получение массива метрик с использованием треугольной матрицы
         end
         
@@ -271,17 +270,24 @@ classdef RecursiveReduction < handle
             metr_dif = RecursiveReduction.get_correction_components(fvs_red,fvs_red).^2; % расчитать элементы корректировки
             
             cor_map(cor_map==0) = [];       % убрать неизменные сегменты
-            metr_dif = squeeze(sum(...      % добавка вычисляется как линейная комбинация
-                metr_dif.*...               % добавок с множителями удал/добавл
-                repmat( reshape(cor_map,[],1),...   % репликации вектора множителей
-                [1,size(metr_dif,2),size(metr_dif,3)] ), ...
-                1));
+            
+            metr_dif(cor_map.'<0,:,:) = -metr_dif(cor_map.'<0,:,:);
+            metr_dif = squeeze(sum(metr_dif, 1));
+            
+%             metr_dif = squeeze(sum(...      % добавка вычисляется как линейная комбинация
+%                 metr_dif.*...               % добавок с множителями удал/добавл
+%                 repmat( reshape(cor_map,[],1),...   % репликации вектора множителей
+%                 [1,size(metr_dif,2),size(metr_dif,3)] ), ...
+%                 1));
+            
             if obj.upd  % если стоит признак обновления, то обновить
                 obj.rhos_sqr = obj.rhos_sqr + metr_dif;
                 obj.feat_map = t_map;
-                rhos = sqrt(obj.rhos_sqr);
+                rhos = obj.rhos_sqr;
+%                 rhos = sqrt(obj.rhos_sqr);
             else
-                rhos = sqrt(obj.rhos_sqr + metr_dif);
+%                 rhos = sqrt(obj.rhos_sqr + metr_dif);
+                rhos = obj.rhos_sqr + metr_dif;
             end
         end
         
@@ -298,11 +304,8 @@ classdef RecursiveReduction < handle
         %   Рассчитывает разности между всеми строками
         %   На выходе (v_dim x m x n) матрица разностей 
             n_obj = [size(c1,1) size(c2,1)];     % Определение числа объектов в классах
-            c1 = repmat(c1.',1,1,n_obj(2));      % Репликация матрицы -> v_dim x m x n
-            c2 = permute(c2,[2 3 1]);            % транспонирование матрицы -> v_dim x 1 x n
-            for i_obj = 1:n_obj(1)
-                c1(:,i_obj,:) = (c1(:,i_obj,:) - c2);   % Расчет метрик
-            end
+            c1 = repmat(c1.',1,1,n_obj(2)) - repmat(permute(c2,[2 3 1]), 1, n_obj(1), 1);
+            
         end
         
     end
