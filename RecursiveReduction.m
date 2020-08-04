@@ -9,11 +9,12 @@ classdef RecursiveReduction < handle
         targets     % разметка векторов признаков
         targets_ids  % 
         weight_fun   % взвешивающая функция
+        
+        alien_mask
     end
     
     properties(Hidden=true)
-        upd = true  % обновить метрики на текущем расчете
-        alien_mask
+        upd=true    % обновить метрики на текущем расчете
     end
     
     methods
@@ -51,7 +52,7 @@ classdef RecursiveReduction < handle
                 'hist_edges', linspace(0,2,51),...  % границы интервалов гистограммы
                 'n_nearest', 5, ...                 % число проверяемых соседей
                 'm_technique','mean',...            % метод расчет
-                'k_alien', 2, ...                   % число своих
+                'k_alien', 2, ...                   % число чужих
                 'heuristic', 'adddel');               % эвристика сканирования
             [dimensions, reduction_type, n_metrics_fraction, hist_edges, ...
                 n_nearest, m_technique, k_alien, heuristic] =  ...
@@ -68,6 +69,9 @@ classdef RecursiveReduction < handle
                     obj.weight_fun = ...
                         linspace(1,0,n_nearest+1 );
                 case 'fisher',  heuristic = 'fisher';
+                case 'refmmin'
+                    obj.refine_aliens(k_alien, n_nearest)
+                    rho_estimate = @(t_map) obj.buryi(t_map);
                 otherwise,      error('Неправильно задан метод редукции. Поддерживаемые: nmin, buryi, mhist, minalien')
             end
             dimensions = dimensions(dimensions<=dim_fv); % обновить вектор размерностей
@@ -291,6 +295,36 @@ classdef RecursiveReduction < handle
             end
         end
         
+        
+        % Функция очистки областей пересечения
+        function [] = refine_aliens(obj, k_alien, n_nearest)
+            
+            % рассчитать метрики
+            % сортировать
+            % удалить            
+            update_status = obj.upd;
+            obj.upd = false;
+            [n_samples, dim_fv] = size(obj.fvs);
+            t_map = ones(1,dim_fv,'single');
+            [~, sort_indexes] = mink(obj.get_metrics(t_map), n_nearest+1, 2);  % получить порядок соседей для каждого вектора
+            neq_matrix = zeros(n_samples, n_nearest); % предсоздание м-цы эквив-сти
+            
+            for i=1:n_nearest 
+                 neq_matrix(:, i) = ...
+                     obj.targets_ids ~= obj.targets_ids(sort_indexes(:, i+1)); % i+1, т.к. 1й - сам вектор признаков
+            end
+            % получена матрица эквивалентности n_samples x n_nearest
+            del_idx = sum(neq_matrix, 2)>(k_alien);
+            
+            obj.fvs(del_idx,:)=[];
+            obj.rhos_sqr = zeros(size(obj.fvs,1),'like',obj.fvs);   % текущие метрики
+            obj.targets(del_idx,:)=[];
+            obj.targets_ids(del_idx,:)=[];
+            obj.alien_mask = and(...
+                obj.targets_ids~=obj.targets_ids.',...
+                triu(ones(size(obj.targets_ids,1),'logical'),1)); % маска расчета метрик
+            obj.upd = update_status;
+        end
        
     end
     
