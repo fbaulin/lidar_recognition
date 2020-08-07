@@ -26,8 +26,8 @@ t_names = t_names(t_select_v);
 
 switch reduction_method
     case 'mhist',       red_param = [num2str(n_metrics_fraction) '-' num2str(hist_max_value)];
-    case 'nmin',        red_param = num2str(n_metrics_fraction);
-    case {'buryi', 'fisher'},            red_param = '';
+    case {'nmin','integrnmin'},        red_param = num2str(n_metrics_fraction);
+    case {'buryi', 'fisher', 'auhist'},            red_param = '';
     case {'minalien','prat','wprat'},    red_param = num2str(n_nearest);
     otherwise,          error('Неизвестный метод редукции')
 end
@@ -63,7 +63,7 @@ for i_type = 1:n_types
     dimensions_cell{i_type} = sum(in_data.fs_maps,2);
     fs_chars_cell{i_type} = in_data.fs_chars;
     switch reduction_method
-    case {'nmin', 'buryi'}
+    case {'nmin', 'buryi','auhist'}
         fs_chars_cell{i_type}(2:end) = fs_chars_cell{i_type}(2:end)./sqrt(dimensions_cell{i_type}(2:end));
         y_scale = [0 0.03];
     case {'minalien', 'prat'}

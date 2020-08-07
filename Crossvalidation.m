@@ -88,8 +88,8 @@ classdef Crossvalidation
 
             % Формирование сигнатуры исследования
             switch reduction_method
-                case 'nmin',        red_param = num2str(n_metrics_fraction);
-                case {'buryi','fisher'},            red_param = '';
+                case {'nmin', 'integrnmin'},        red_param = num2str(n_metrics_fraction);
+                case {'buryi','fisher','auhist'},            red_param = '';
                 case {'minalien','prat','wprat'},   red_param = num2str(n_nearest);
                 case 'refmmin',                   red_param = [num2str(k_alien) 'of' num2str(n_nearest)];
                 otherwise,          error('Неизвестный метод редукции')

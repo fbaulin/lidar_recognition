@@ -19,15 +19,16 @@ classdef RecursiveReduction < handle
     
     properties(Hidden=true)
         upd=true    % обновить метрики на текущем расчете
+        gpu_supported_methods = {'nmin', 'buryi', 'refmmin', 'integrnmin', 'auhist'}
     end
     
     methods
         function obj = RecursiveReduction(varargin)
         %RecursiveReduction Используется для задания параметров редукции
         %   Detailed explanation goes here
-        % Именованные параметры:
-        % 'gpu' - 'True'/'False' - использовать графический адаптер
-        % 'reduction' - тип редукции
+        %   Именованные параметры:
+        %   'gpu_on' - 'True'/'False' - использовать графический адаптер
+        %   'reduction' - тип редукции
         %       'buryi'
         %       'nmin'
         %       'mhist'
@@ -36,182 +37,110 @@ classdef RecursiveReduction < handle
         %       'wprat'
         %       'fisher'
         %       'refmin'
-        % 'heuristic' - эвристический метод сокращения вычислений
+        %   'heuristic' - эвристический метод сокращения вычислений
         %       'adddel' - метод поочередного добавления и удаления компонент (сканируется не все
         %       пространство признаков)
         %       'gray'  - кодирование пространств кодом грея
-        % 'dimensions' - размерности пространства признаков для которых нужно найти решения
-        % Гиперпараметры методов:
-        % 'n_metrics_fraction'
-        % 'm_technique'
-        % 'k_alien'
-        % 'n_nearest'
-        % 'hist_edges'
-%             kwargs = KeywordArguments(...
-%                 'gpu', false,...
-%                 'dimensions',1:dim_fv, ...          % исследуемые размерности
-%                 'reduction_type', 'fisher',...      % исследуемые размерности
-%                 'n_metrics_fraction', 0.05,...      % число метрик
-%                 'hist_edges', linspace(0,2,51),...  % границы интервалов гистограммы
-%                 'n_nearest', 5, ...                 % число проверяемых соседей
-%                 'm_technique','mean',...            % метод расчет
-%                 'k_alien', 2, ...                   % число чужих
-%                 'heuristic', 'adddel');               % эвристика сканирования
-%             [gpu, dimensions, reduction_type, n_metrics_fraction, hist_edges, ...
-%                 n_nearest, m_technique, k_alien, heuristic] =  ...
-%                 kwargs.parse_input_cell(varargin); %#ok<ASGLU>
+        %   'dimensions' - размерности пространства признаков для которых нужно найти решения
+        %   Гиперпараметры методов:
+        %   'n_metrics_fraction'
+        %   'm_technique'
+        %   'k_alien'
+        %   'n_nearest'
+        %   'hist_edges'
             
-            
-        end
-        
-        % рудукция пространства признаков
-        function [varargout] = fs_reduction(obj, fvs, targets, varargin)
-            varargout=cell(1,nargout);
-            
-            supported = any([
-                strcmp(varargin,'buryi'), ...
-                strcmp(varargin,'nmin'), ...
-                strcmp(varargin,'refmin')]);
-            if and(gpuDeviceCount >=1, any(strcmp(varargin,supported)))
-                [varargout{:}] = fs_reduction_gpu(obj, fvs, targets, varargin{:});
-            else
-                [varargout{:}] = fs_reduction_cpu(obj, fvs, targets, varargin{:});
+            kw = KeywordArguments();
+            obj.use_gpu = kw.get_value(varargin, 'gpu_on', gpuDeviceCount());
+            obj.heurist = kw.get_value(varargin, 'heuristic', 'adddel');          % эвристика сканирования
+            obj.reduction = kw.get_value(varargin, 'reduction_type', 'buryi');   % исследуемые размерности
+            if or(strcmp(obj.heurist, 'fisher'), strcmp(obj.reduction, 'fisher'))
+                obj.reduction = 'fisher'; obj.heurist = 'fisher';
             end
-           
+            obj.setup_reduction(varargin);
+    
         end
         
-        % редукция пространства признаков в режиме ЦП
-        function [fspace_qs, fspace_map, varargout] = fs_reduction_cpu(obj, fvs, targets, varargin)
-        %fs_reduction редукция с учетом размерности выборки
-        % на выходе
-        % fspace_rhos - вектор-столбец с метриками
-        % fspace_maps - матрица по строкам которой расположены настройки пространства
-        % Аргументы: 
-        % fvs - вектора признаков (по строкам)
-        % Именованные параметры:
-        % dimensions, reduction_type, n_metrics_fraction, hist_edges,
-        % obj_weight
-            obj.fvs = fvs;
-%GPU             obj.fvs = gpuArray(fvs);
+        function [fspace_qs, fspace_map, varargout] = reduce(obj, fvs, targets, varargin)
+            kw = KeywordArguments();
+            obj.use_gpu = and(...
+                any(strcmp(kw.get_value(varargin, 'reduction_type'), obj.gpu_supported_methods)), ...
+                kw.get_value(varargin, 'gpu_on', gpuDeviceCount()) );    % обновить если на вход передан новый парам
+            obj.heurist = kw.get_value(varargin, 'heuristic', obj.heurist);    
+            obj.write_data(fvs, targets);    % запись данных
+            obj.setup_reduction(varargin{:});   % настройка редукции
+            
+            dimensions = kw.get_value(varargin,'dimensions',1:size(fvs,2));
+            dimensions = dimensions(dimensions<=size(fvs,2)); % обновить вектор размерностей
+            
+            fprintf('(%s) H.=%s, ',datetime('now','Format','HH:mm:ss'), obj.heurist);
+            switch obj.heurist
+                case 'adddel',              [fspace_qs, fspace_map] = ...
+                        obj.add_del_reduction(obj.estimate_q, dimensions);
+                case 'gray',                [fspace_qs, fspace_map] = ...
+                        obj.gray_reduction(obj.estimate_q, dimensions);
+                case 'fisher',              [fspace_qs, fspace_map] = ...
+                        obj.fisher_selection(dimensions);
+                otherwise, error('Ошибка выбора эвристического алгоритма редукции')
+            end
+            fprintf('%s: [ %s ]\n',obj.reduction,num2str(fspace_qs.', '%6.3f '));
+            if nargout==3, varargout{1} = dimensions; end
+            
+        end
+        
+        function write_data(obj, fvs, targets)
             dim_fv = size(fvs,2);            % размерность ВП
             obj.feat_map = zeros(1,dim_fv,'single');
+            [~, ~, obj.targets_ids] =  unique(targets); 
+            if obj.use_gpu
+                obj.fvs = gpuArray(fvs);
+                obj.targets_ids = gpuArray(uint8(obj.targets_ids));
+                obj.alien_mask = gpuArray(and(...
+                    obj.targets_ids~=obj.targets_ids.',...
+                    triu(ones(size(obj.targets_ids,1),'like',obj.targets_ids),1)));     % маска расчета метрик                        
+            else
+                obj.fvs = fvs;
+                obj.targets_ids = uint8(obj.targets_ids);
+                obj.alien_mask = and(...
+                    obj.targets_ids~=obj.targets_ids.',...
+                    triu(ones(size(obj.targets_ids,1),'logical'),1));   % маска расчета метрик
+            end            
             obj.rhos_sqr = zeros(size(fvs,1),'like',fvs);
-%GPU             obj.rhos_sqr = zeros(size(fvs,1),'single','gpuArray');
-            [~, ~, obj.targets_ids] = unique(targets);        % преобразовать имена в id-номера
-%GPU             obj.alien_mask = gpuArray(and(...
-%GPU                 obj.targets_ids~=obj.targets_ids.',...
-%GPU                 triu(ones(size(obj.targets_ids,1),'logical'),1))); % маска расчета метрик
-                        
-            obj.alien_mask = and(...
-                obj.targets_ids~=obj.targets_ids.',...
-                triu(ones(size(obj.targets_ids,1),'logical'),1)); % маска расчета метрик             
-            kwargs = KeywordArguments(...
-                'dimensions',1:dim_fv, ...          % исследуемые размерности
-                'reduction_type', 'fisher',...      % исследуемые размерности
-                'n_metrics_fraction', 0.05,...      % число метрик
-                'hist_edges', linspace(0,2,51),...  % границы интервалов гистограммы
-                'n_nearest', 5, ...                 % число проверяемых соседей
-                'm_technique','mean',...            % метод расчет
-                'k_alien', 2, ...                   % число чужих
-                'heuristic', 'adddel');               % эвристика сканирования
-            [dimensions, reduction_type, n_metrics_fraction, hist_edges, ...
-                n_nearest, m_technique, k_alien, heuristic] =  ...
-                kwargs.parse_input_cell(varargin);
-            % настройка специфическая для метода
-            switch reduction_type
-                case 'nmin',    rho_estimate = @(t_map) obj.nmin_metric_balanced(t_map, n_metrics_fraction);
-                case 'buryi',   rho_estimate = @(t_map) obj.buryi(t_map);
-                case 'mhist',   rho_estimate = @(t_map) obj.hist_acc(t_map, hist_edges, n_metrics_fraction);
-                case 'minalien',rho_estimate = @(t_map) obj.minalien(t_map, n_nearest, m_technique, k_alien);
-                case 'prat',    rho_estimate = @(t_map) obj.max_p_relative(t_map, n_nearest);
+        end
+        
+        function setup_reduction(obj, varargin)
+            kw = KeywordArguments();
+            obj.reduction = kw.get_value(varargin, 'reduction_type', obj.reduction);      % исследуемые размерности
+            n_metrics_fraction = kw.get_value(varargin, 'n_metrics_fraction', 0.05);      % число метрик
+%             hist_edges =    kw.get_value(varargin, 'hist_edges', linspace(0,2,51));  % границы интервалов гистограммы
+            n_nearest =     kw.get_value(varargin, 'n_nearest', 5);               % число проверяемых соседей
+            m_technique =   kw.get_value(varargin, 'm_technique','mean');            % метод расчет
+            k_alien =       kw.get_value(varargin, 'k_alien', 2);                   % число чужих
+            switch obj.reduction
+                case 'nmin',        rho_estimate = @(t_map) obj.nmin_metric_balanced(t_map, n_metrics_fraction);
+                case 'integrnmin',  rho_estimate = @(t_map) obj.integr_nmin(t_map, n_metrics_fraction);
+                case 'buryi',       rho_estimate = @(t_map) obj.buryi(t_map);
+%                 case 'mhist',   rho_estimate = @(t_map) obj.hist_acc(t_map, hist_edges, n_metrics_fraction);
+                case 'minalien',    rho_estimate = @(t_map) obj.minalien(t_map, n_nearest, m_technique, k_alien);
+                case 'auhist',      rho_estimate = @(t_map) obj.auhist(t_map);
+                case 'prat',        rho_estimate = @(t_map) obj.max_p_relative(t_map, n_nearest);
                 case 'wprat'   
                     rho_estimate = @(t_map) obj.w_p_relative(t_map, n_nearest);
                     obj.weight_fun = ...
                         linspace(1,0,n_nearest+1 );
-                case 'fisher',  heuristic = 'fisher';
                 case 'refmmin'
                     obj.refine_aliens(k_alien, n_nearest)
                     rho_estimate = @(t_map) obj.buryi(t_map);
+                case 'fisher',      obj.heurist = 'fisher';
                 otherwise,      error('Неправильно задан метод редукции. Поддерживаемые: nmin, buryi, mhist, minalien')
             end
-            dimensions = dimensions(dimensions<=dim_fv); % обновить вектор размерностей
-            fprintf('(%s) H.=%s, ',datetime('now','Format','HH:mm:ss'), heuristic);
-            switch heuristic
-                case 'adddel',              [fspace_qs, fspace_map] = ...
-                        obj.add_del_reduction(rho_estimate, dimensions);
-                case 'gray',                [fspace_qs, fspace_map] = ...
-                        obj.gray_reduction(rho_estimate, dimensions);
-                case 'fisher',              [fspace_qs, fspace_map] = ...
-                        obj.fisher_selection(dimensions);
-                otherwise, error('Ошибка выбора эвристического алгоритма редукции')
+            if obj.use_gpu
+                if any(strcmp(obj.reduction,obj.gpu_supported_methods))
+                    obj.estimate_q = @(t_map) gather(rho_estimate(t_map));
+                else
+                    obj.use_gpu = false;
+                    obj.estimate_q = rho_estimate;
+                end
             end
-            fprintf('%s: [ %s ]\n',reduction_type,num2str(fspace_qs.', '%6.3f '));
-            if nargout==3, varargout{1} = dimensions; end
-        end
-        
-        % редукция пространства признаков в режиме ГП
-        function [fspace_qs, fspace_map, varargout] = fs_reduction_gpu(obj, fvs, targets, varargin)
-        %fs_reduction редукция с учетом размерности выборки
-        % на выходе
-        % fspace_rhos - вектор-столбец с метриками
-        % fspace_maps - матрица по строкам которой расположены настройки пространства
-        % Аргументы: 
-        % fvs - вектора признаков (по строкам)
-        % Именованные параметры:
-        % dimensions, reduction_type, n_metrics_fraction, hist_edges,
-        % obj_weight
-            obj.fvs = gpuArray(fvs);
-            dim_fv = size(fvs,2);            % размерность ВП
-            obj.feat_map = zeros(1,dim_fv,'single');
-            obj.rhos_sqr = zeros(size(fvs,1),'single','gpuArray');
-            [~, ~, obj.targets_ids] =  unique(targets);        % преобразовать имена в id-номера
-            obj.targets_ids = gpuArray(uint8(obj.targets_ids));
-            obj.alien_mask = gpuArray(and(...
-                obj.targets_ids~=obj.targets_ids.',...
-                triu(ones(size(obj.targets_ids,1),'like',obj.targets_ids),1))); % маска расчета метрик
-                        
-            kwargs = KeywordArguments(...
-                'dimensions',1:dim_fv, ...          % исследуемые размерности
-                'reduction_type', 'fisher',...      % исследуемые размерности
-                'n_metrics_fraction', 0.05,...      % число метрик
-                'hist_edges', linspace(0,2,51),...  % границы интервалов гистограммы
-                'n_nearest', 5, ...                 % число проверяемых соседей
-                'm_technique','mean',...            % метод расчет
-                'k_alien', 2, ...                   % число чужих
-                'heuristic', 'adddel');               % эвристика сканирования
-            [dimensions, reduction_type, n_metrics_fraction, hist_edges, ...
-                n_nearest, m_technique, k_alien, heuristic] =  ...
-                kwargs.parse_input_cell(varargin);
-            % настройка специфическая для метода
-            switch reduction_type
-                case 'nmin',    rho_estimate = @(t_map) gather(obj.nmin_metric_balanced(t_map, n_metrics_fraction));
-                case 'buryi',   rho_estimate = @(t_map) gather(obj.buryi(t_map));
-                case 'minalien',rho_estimate = @(t_map) gather(obj.minalien(t_map, n_nearest, m_technique, k_alien));
-                case 'mhist',   rho_estimate = @(t_map) gather(obj.hist_acc(t_map, hist_edges, n_metrics_fraction));
-                case 'prat',    rho_estimate = @(t_map) gather(obj.max_p_relative(t_map, n_nearest));
-                case 'fisher',  heuristic = 'fisher';
-                case 'refmmin'
-                    obj.refine_aliens(k_alien, n_nearest)
-                    rho_estimate = @(t_map) gather(obj.buryi(t_map));
-                otherwise,      error('Неправильно задан метод редукции. Поддерживаемые: nmin, buryi, mhist, minalien')
-            end
-            dimensions = dimensions(dimensions<=dim_fv); % обновить вектор размерностей
-            fprintf('(%s) H.=%s, ',datetime('now','Format','HH:mm:ss'), heuristic);
-            switch heuristic
-                case 'adddel',              [fspace_qs, fspace_map] = ...
-                        obj.add_del_reduction(rho_estimate, dimensions);
-                case 'gray',                [fspace_qs, fspace_map] = ...
-                        obj.gray_reduction(rho_estimate, dimensions);
-                case 'fisher',              [fspace_qs, fspace_map] = ...
-                        obj.fisher_selection(dimensions);
-                otherwise, error('Ошибка выбора эвристического алгоритма редукции')
-            end
-            fprintf('%s: [ %s ]\n',reduction_type,num2str(fspace_qs.', '%6.3f '));
-            if nargout==3, varargout{1} = dimensions; end
-        end
-        
-        function set_q_setimate(obj, varagin) %#ok<INUSD>
-            % Установить тип и записать параметры редукции
         end
         
         %% Эвристические алгоритмы редукции
@@ -357,6 +286,19 @@ classdef RecursiveReduction < handle
             space_q = rhos(n_rho_index);        % поиск n-ной метрики
         end
         
+        function space_q = integr_nmin(obj, t_map, n_min_ratio)
+            rhos = obj.get_metrics(t_map);
+            rhos = sort(rhos(obj.alien_mask), 'ascend');
+            n_rho_index = floor(length(rhos)*n_min_ratio);
+            space_q = sum(rhos(n_rho_index:end));        % поиск n-ной метрики
+        end
+        
+        function space_q = auhist(obj, t_map)
+            rhos = obj.get_metrics(t_map);
+            rhos = rhos(obj.alien_mask);
+            space_q = sum(rhos)/(length(rhos)*max(rhos));
+        end 
+        
         function space_q = buryi(obj, t_map)
             rhos = obj.get_metrics(t_map);      % апдейт метрик
 %             n_samples = size(obj.fvs, 1);       % число объектов
@@ -444,6 +386,146 @@ classdef RecursiveReduction < handle
             obj.upd = update_status;
         end
        
+        
+        %% legacy
+        % рудукция пространства признаков
+        function [varargout] = fs_reduction(obj, fvs, targets, varargin)
+            varargout=cell(1,nargout);
+            
+            reduction_name = KeywordArguments.get_value(varargin, 'reduction_type');
+            supported = any(strcmp(reduction_name,obj.gpu_supported_methods));
+            if and(gpuDeviceCount() >=1, supported)
+                [varargout{:}] = fs_reduction_gpu(obj, fvs, targets, varargin{:});
+            else
+                [varargout{:}] = fs_reduction_cpu(obj, fvs, targets, varargin{:});
+            end
+           
+        end
+        % редукция пространства признаков в режиме ЦП
+        function [fspace_qs, fspace_map, varargout] = fs_reduction_cpu(obj, fvs, targets, varargin)
+        %fs_reduction редукция с учетом размерности выборки
+        % на выходе
+        % fspace_rhos - вектор-столбец с метриками
+        % fspace_maps - матрица по строкам которой расположены настройки пространства
+        % Аргументы: 
+        % fvs - вектора признаков (по строкам)
+        % Именованные параметры:
+        % dimensions, reduction_type, n_metrics_fraction, hist_edges,
+        % obj_weight
+            obj.fvs = fvs;
+            dim_fv = size(fvs,2);            % размерность ВП
+            obj.feat_map = zeros(1,dim_fv,'single');
+            obj.rhos_sqr = zeros(size(fvs,1),'like',fvs);
+            [~, ~, obj.targets_ids] = unique(targets);        % преобразовать имена в id-номера
+            obj.alien_mask = and(...
+                obj.targets_ids~=obj.targets_ids.',...
+                triu(ones(size(obj.targets_ids,1),'logical'),1)); % маска расчета метрик             
+            kwargs = KeywordArguments(...
+                'dimensions',1:dim_fv, ...          % исследуемые размерности
+                'reduction_type', 'fisher',...      % исследуемые размерности
+                'n_metrics_fraction', 0.05,...      % число метрик
+                'hist_edges', linspace(0,2,51),...  % границы интервалов гистограммы
+                'n_nearest', 5, ...                 % число проверяемых соседей
+                'm_technique','mean',...            % метод расчет
+                'k_alien', 2, ...                   % число чужих
+                'heuristic', 'adddel');               % эвристика сканирования
+            [dimensions, reduction_type, n_metrics_fraction, hist_edges, ...
+                n_nearest, m_technique, k_alien, heuristic] =  ...
+                kwargs.parse_input_cell(varargin);
+            % настройка специфическая для метода
+            switch reduction_type
+                case 'nmin',    rho_estimate = @(t_map) obj.nmin_metric_balanced(t_map, n_metrics_fraction);
+                case 'buryi',   rho_estimate = @(t_map) obj.buryi(t_map);
+                case 'mhist',   rho_estimate = @(t_map) obj.hist_acc(t_map, hist_edges, n_metrics_fraction);
+                case 'minalien',rho_estimate = @(t_map) obj.minalien(t_map, n_nearest, m_technique, k_alien);
+                case 'prat',    rho_estimate = @(t_map) obj.max_p_relative(t_map, n_nearest);
+                case 'wprat'   
+                    rho_estimate = @(t_map) obj.w_p_relative(t_map, n_nearest);
+                    obj.weight_fun = ...
+                        linspace(1,0,n_nearest+1 );
+                case 'fisher',  heuristic = 'fisher';
+                case 'refmmin'
+                    obj.refine_aliens(k_alien, n_nearest)
+                    rho_estimate = @(t_map) obj.buryi(t_map);
+                otherwise,      error('Неправильно задан метод редукции. Поддерживаемые: nmin, buryi, mhist, minalien')
+            end
+            dimensions = dimensions(dimensions<=dim_fv); % обновить вектор размерностей
+            fprintf('(%s) H.=%s, ',datetime('now','Format','HH:mm:ss'), heuristic);
+            switch heuristic
+                case 'adddel',              [fspace_qs, fspace_map] = ...
+                        obj.add_del_reduction(rho_estimate, dimensions);
+                case 'gray',                [fspace_qs, fspace_map] = ...
+                        obj.gray_reduction(rho_estimate, dimensions);
+                case 'fisher',              [fspace_qs, fspace_map] = ...
+                        obj.fisher_selection(dimensions);
+                otherwise, error('Ошибка выбора эвристического алгоритма редукции')
+            end
+            fprintf('%s: [ %s ]\n',reduction_type,num2str(fspace_qs.', '%6.3f '));
+            if nargout==3, varargout{1} = dimensions; end
+        end
+        
+        % редукция пространства признаков в режиме ГП
+        function [fspace_qs, fspace_map, varargout] = fs_reduction_gpu(obj, fvs, targets, varargin)
+        %fs_reduction редукция с учетом размерности выборки
+        % на выходе
+        % fspace_rhos - вектор-столбец с метриками
+        % fspace_maps - матрица по строкам которой расположены настройки пространства
+        % Аргументы: 
+        % fvs - вектора признаков (по строкам)
+        % Именованные параметры:
+        % dimensions, reduction_type, n_metrics_fraction, hist_edges,
+        % obj_weight
+            obj.fvs = gpuArray(fvs);
+            dim_fv = size(fvs,2);            % размерность ВП
+            obj.feat_map = zeros(1,dim_fv,'single');
+            obj.rhos_sqr = zeros(size(fvs,1),'single','gpuArray');
+            [~, ~, obj.targets_ids] =  unique(targets);        % преобразовать имена в id-номера
+            obj.targets_ids = gpuArray(uint8(obj.targets_ids));
+            obj.alien_mask = gpuArray(and(...
+                obj.targets_ids~=obj.targets_ids.',...
+                triu(ones(size(obj.targets_ids,1),'like',obj.targets_ids),1))); % маска расчета метрик
+                        
+            kwargs = KeywordArguments(...
+                'dimensions',1:dim_fv, ...          % исследуемые размерности
+                'reduction_type', 'fisher',...      % исследуемые размерности
+                'n_metrics_fraction', 0.05,...      % число метрик
+                'hist_edges', linspace(0,2,51),...  % границы интервалов гистограммы
+                'n_nearest', 5, ...                 % число проверяемых соседей
+                'm_technique','mean',...            % метод расчет
+                'k_alien', 2, ...                   % число чужих
+                'heuristic', 'adddel');               % эвристика сканирования
+            [dimensions, reduction_type, n_metrics_fraction, hist_edges, ...
+                n_nearest, m_technique, k_alien, heuristic] =  ...
+                kwargs.parse_input_cell(varargin);
+            % настройка специфическая для метода
+            switch reduction_type
+                case 'nmin',    rho_estimate = @(t_map) gather(obj.nmin_metric_balanced(t_map, n_metrics_fraction));
+                case 'buryi',   rho_estimate = @(t_map) gather(obj.buryi(t_map));
+                case 'minalien',rho_estimate = @(t_map) gather(obj.minalien(t_map, n_nearest, m_technique, k_alien));
+                case 'mhist',   rho_estimate = @(t_map) gather(obj.hist_acc(t_map, hist_edges, n_metrics_fraction));
+                case 'prat',    rho_estimate = @(t_map) gather(obj.max_p_relative(t_map, n_nearest));
+                case 'fisher',  heuristic = 'fisher';
+                case 'refmmin'
+                    obj.refine_aliens(k_alien, n_nearest)
+                    rho_estimate = @(t_map) gather(obj.buryi(t_map));
+                otherwise,      error('Неправильно задан метод редукции. Поддерживаемые: nmin, buryi, mhist, minalien')
+            end
+            dimensions = dimensions(dimensions<=dim_fv); % обновить вектор размерностей
+            fprintf('(%s) H.=%s, ',datetime('now','Format','HH:mm:ss'), heuristic);
+            switch heuristic
+                case 'adddel',              [fspace_qs, fspace_map] = ...
+                        obj.add_del_reduction(rho_estimate, dimensions);
+                case 'gray',                [fspace_qs, fspace_map] = ...
+                        obj.gray_reduction(rho_estimate, dimensions);
+                case 'fisher',              [fspace_qs, fspace_map] = ...
+                        obj.fisher_selection(dimensions);
+                otherwise, error('Ошибка выбора эвристического алгоритма редукции')
+            end
+            fprintf('%s: [ %s ]\n',reduction_type,num2str(fspace_qs.', '%6.3f '));
+            if nargout==3, varargout{1} = dimensions; end
+        end
+        
+        
     end
     
     methods(Static=true)
@@ -461,5 +543,6 @@ classdef RecursiveReduction < handle
         end
         
     end
+    
 end
 
