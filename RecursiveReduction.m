@@ -1,16 +1,20 @@
 classdef RecursiveReduction < handle
-    %UNTITLED3 Summary of this class goes here
-    %   Detailed explanation goes here
+    %RecursiveReduction Вычислительно эффективные методы отбора признаков
+    %   Методы отбора признаков реализованные на основе метрического анализа пространств признаков
     
     properties
-        rhos_sqr    % текущие метрики
-        feat_map    % текщая настройка пространства признаков
-        fvs         % векторы признаков
-        targets     % разметка векторов признаков
-        targets_ids  % 
-        weight_fun   % взвешивающая функция
-        
+        rhos_sqr        % текущие метрики
+        feat_map        % текщая настройка пространства признаков
+        fvs             % векторы признаков
+        targets_ids     % идентификационные номера, присваиваемые внотри этого класса
         alien_mask
+        weight_fun      % взвешивающая функция
+        
+        use_gpu         % импользовать gpu
+        reduction       % метод редукции
+        heurist         % эвристический алгоритм
+        estimate_q      % функция оценки качества пространства
+        
     end
     
     properties(Hidden=true)
@@ -18,14 +22,66 @@ classdef RecursiveReduction < handle
     end
     
     methods
-        function obj = RecursiveReduction()
-            %UNTITLED3 Construct an instance of this class
-            %   Detailed explanation goes here
+        function obj = RecursiveReduction(varargin)
+        %RecursiveReduction Используется для задания параметров редукции
+        %   Detailed explanation goes here
+        % Именованные параметры:
+        % 'gpu' - 'True'/'False' - использовать графический адаптер
+        % 'reduction' - тип редукции
+        %       'buryi'
+        %       'nmin'
+        %       'mhist'
+        %       'minalien'
+        %       'prat'
+        %       'wprat'
+        %       'fisher'
+        %       'refmin'
+        % 'heuristic' - эвристический метод сокращения вычислений
+        %       'adddel' - метод поочередного добавления и удаления компонент (сканируется не все
+        %       пространство признаков)
+        %       'gray'  - кодирование пространств кодом грея
+        % 'dimensions' - размерности пространства признаков для которых нужно найти решения
+        % Гиперпараметры методов:
+        % 'n_metrics_fraction'
+        % 'm_technique'
+        % 'k_alien'
+        % 'n_nearest'
+        % 'hist_edges'
+%             kwargs = KeywordArguments(...
+%                 'gpu', false,...
+%                 'dimensions',1:dim_fv, ...          % исследуемые размерности
+%                 'reduction_type', 'fisher',...      % исследуемые размерности
+%                 'n_metrics_fraction', 0.05,...      % число метрик
+%                 'hist_edges', linspace(0,2,51),...  % границы интервалов гистограммы
+%                 'n_nearest', 5, ...                 % число проверяемых соседей
+%                 'm_technique','mean',...            % метод расчет
+%                 'k_alien', 2, ...                   % число чужих
+%                 'heuristic', 'adddel');               % эвристика сканирования
+%             [gpu, dimensions, reduction_type, n_metrics_fraction, hist_edges, ...
+%                 n_nearest, m_technique, k_alien, heuristic] =  ...
+%                 kwargs.parse_input_cell(varargin); %#ok<ASGLU>
+            
             
         end
         
-        % редукция пространства признаков
-        function [fspace_qs, fspace_map, varargout] = fs_reduction(obj, fvs, targets, varargin)
+        % рудукция пространства признаков
+        function [varargout] = fs_reduction(obj, fvs, targets, varargin)
+            varargout=cell(1,nargout);
+            
+            supported = any([
+                strcmp(varargin,'buryi'), ...
+                strcmp(varargin,'nmin'), ...
+                strcmp(varargin,'refmin')]);
+            if and(gpuDeviceCount >=1, any(strcmp(varargin,supported)))
+                [varargout{:}] = fs_reduction_gpu(obj, fvs, targets, varargin{:});
+            else
+                [varargout{:}] = fs_reduction_cpu(obj, fvs, targets, varargin{:});
+            end
+           
+        end
+        
+        % редукция пространства признаков в режиме ЦП
+        function [fspace_qs, fspace_map, varargout] = fs_reduction_cpu(obj, fvs, targets, varargin)
         %fs_reduction редукция с учетом размерности выборки
         % на выходе
         % fspace_rhos - вектор-столбец с метриками
@@ -36,18 +92,22 @@ classdef RecursiveReduction < handle
         % dimensions, reduction_type, n_metrics_fraction, hist_edges,
         % obj_weight
             obj.fvs = fvs;
+%GPU             obj.fvs = gpuArray(fvs);
             dim_fv = size(fvs,2);            % размерность ВП
             obj.feat_map = zeros(1,dim_fv,'single');
             obj.rhos_sqr = zeros(size(fvs,1),'like',fvs);
-            obj.targets = targets;
+%GPU             obj.rhos_sqr = zeros(size(fvs,1),'single','gpuArray');
             [~, ~, obj.targets_ids] = unique(targets);        % преобразовать имена в id-номера
+%GPU             obj.alien_mask = gpuArray(and(...
+%GPU                 obj.targets_ids~=obj.targets_ids.',...
+%GPU                 triu(ones(size(obj.targets_ids,1),'logical'),1))); % маска расчета метрик
+                        
             obj.alien_mask = and(...
                 obj.targets_ids~=obj.targets_ids.',...
-                triu(ones(size(obj.targets_ids,1),'logical'),1)); % маска расчета метрик
-            
+                triu(ones(size(obj.targets_ids,1),'logical'),1)); % маска расчета метрик             
             kwargs = KeywordArguments(...
                 'dimensions',1:dim_fv, ...          % исследуемые размерности
-                'reduction_type', 'none',...        % исследуемые размерности
+                'reduction_type', 'fisher',...      % исследуемые размерности
                 'n_metrics_fraction', 0.05,...      % число метрик
                 'hist_edges', linspace(0,2,51),...  % границы интервалов гистограммы
                 'n_nearest', 5, ...                 % число проверяемых соседей
@@ -89,7 +149,74 @@ classdef RecursiveReduction < handle
             if nargout==3, varargout{1} = dimensions; end
         end
         
+        % редукция пространства признаков в режиме ГП
+        function [fspace_qs, fspace_map, varargout] = fs_reduction_gpu(obj, fvs, targets, varargin)
+        %fs_reduction редукция с учетом размерности выборки
+        % на выходе
+        % fspace_rhos - вектор-столбец с метриками
+        % fspace_maps - матрица по строкам которой расположены настройки пространства
+        % Аргументы: 
+        % fvs - вектора признаков (по строкам)
+        % Именованные параметры:
+        % dimensions, reduction_type, n_metrics_fraction, hist_edges,
+        % obj_weight
+            obj.fvs = gpuArray(fvs);
+            dim_fv = size(fvs,2);            % размерность ВП
+            obj.feat_map = zeros(1,dim_fv,'single');
+            obj.rhos_sqr = zeros(size(fvs,1),'single','gpuArray');
+            [~, ~, obj.targets_ids] =  unique(targets);        % преобразовать имена в id-номера
+            obj.targets_ids = gpuArray(uint8(obj.targets_ids));
+            obj.alien_mask = gpuArray(and(...
+                obj.targets_ids~=obj.targets_ids.',...
+                triu(ones(size(obj.targets_ids,1),'like',obj.targets_ids),1))); % маска расчета метрик
+                        
+            kwargs = KeywordArguments(...
+                'dimensions',1:dim_fv, ...          % исследуемые размерности
+                'reduction_type', 'fisher',...      % исследуемые размерности
+                'n_metrics_fraction', 0.05,...      % число метрик
+                'hist_edges', linspace(0,2,51),...  % границы интервалов гистограммы
+                'n_nearest', 5, ...                 % число проверяемых соседей
+                'm_technique','mean',...            % метод расчет
+                'k_alien', 2, ...                   % число чужих
+                'heuristic', 'adddel');               % эвристика сканирования
+            [dimensions, reduction_type, n_metrics_fraction, hist_edges, ...
+                n_nearest, m_technique, k_alien, heuristic] =  ...
+                kwargs.parse_input_cell(varargin);
+            % настройка специфическая для метода
+            switch reduction_type
+                case 'nmin',    rho_estimate = @(t_map) gather(obj.nmin_metric_balanced(t_map, n_metrics_fraction));
+                case 'buryi',   rho_estimate = @(t_map) gather(obj.buryi(t_map));
+                case 'minalien',rho_estimate = @(t_map) gather(obj.minalien(t_map, n_nearest, m_technique, k_alien));
+                case 'mhist',   rho_estimate = @(t_map) gather(obj.hist_acc(t_map, hist_edges, n_metrics_fraction));
+                case 'prat',    rho_estimate = @(t_map) gather(obj.max_p_relative(t_map, n_nearest));
+                case 'fisher',  heuristic = 'fisher';
+                case 'refmmin'
+                    obj.refine_aliens(k_alien, n_nearest)
+                    rho_estimate = @(t_map) gather(obj.buryi(t_map));
+                otherwise,      error('Неправильно задан метод редукции. Поддерживаемые: nmin, buryi, mhist, minalien')
+            end
+            dimensions = dimensions(dimensions<=dim_fv); % обновить вектор размерностей
+            fprintf('(%s) H.=%s, ',datetime('now','Format','HH:mm:ss'), heuristic);
+            switch heuristic
+                case 'adddel',              [fspace_qs, fspace_map] = ...
+                        obj.add_del_reduction(rho_estimate, dimensions);
+                case 'gray',                [fspace_qs, fspace_map] = ...
+                        obj.gray_reduction(rho_estimate, dimensions);
+                case 'fisher',              [fspace_qs, fspace_map] = ...
+                        obj.fisher_selection(dimensions);
+                otherwise, error('Ошибка выбора эвристического алгоритма редукции')
+            end
+            fprintf('%s: [ %s ]\n',reduction_type,num2str(fspace_qs.', '%6.3f '));
+            if nargout==3, varargout{1} = dimensions; end
+        end
         
+        function set_q_setimate(obj, varagin) %#ok<INUSD>
+            % Установить тип и записать параметры редукции
+        end
+        
+        %% Эвристические алгоритмы редукции
+        
+        % Редукция на основе кодирования вектора компонент кодом Грея
         function [fspace_qs, fspace_map] = gray_reduction(obj, rho_estimate, dimensions)
             dim_fv = size(obj.fvs,2);
             n_spaces = length(dimensions);
@@ -121,6 +248,7 @@ classdef RecursiveReduction < handle
             fprintf(repmat('\b', 1, line_len));
         end
         
+        % Редукция на основе сравнения метрики Фишера
         function [fspace_qs, fspace_map] = fisher_selection(obj, dimensions)
         % сформировать набор классов и векторов признаков
             dim_fv = size(obj.fvs,2);       % размерность исх. выборки
@@ -153,6 +281,7 @@ classdef RecursiveReduction < handle
             end
         end
         
+        % Алгоритм поочередного удаления и добавления компонент
         function [fspace_qs, fspace_map] = add_del_reduction(obj, rho_estimate, dimensions)
             
             n_spaces = length(dimensions);
@@ -195,6 +324,7 @@ classdef RecursiveReduction < handle
             
         end
             
+        %% Меры качества пространства
         
         % Расчет максимизируемого числа своих
         function space_q = minalien(obj, t_map, n_nearest, m_technique, k_alien)            
@@ -222,14 +352,8 @@ classdef RecursiveReduction < handle
         %   n_min_ratio - доля метрик, по которым считается величина метрики (<1)
         %   w_rep       - коэффициенты репликации
             rhos = obj.get_metrics(t_map);              % апдейт метрик
-%             n_samples = size(obj.fvs, 1);               % число объектов
-%             alien_mask = and(...
-%                 obj.targets_ids~=obj.targets_ids.',...
-%                 triu(ones(n_samples,'logical'),1));
             rhos = sort( rhos(obj.alien_mask), 'ascend');  % получение массива метрик с использованием треугольной матрицы
-%             n_rho_index = floor(numel(alien_mask)*n_min_ratio); % ПЕРЕСЧЕТ ИЗ ДОЛИ ОБЩЕГО ЧИСЛА МЕТРИК В ДОЛЮ ЧУЖИХ
             n_rho_index = floor(length(rhos)*n_min_ratio);
-%             space_q = mean(rhos(1:n_rho_index));        % поиск n-ной метрики
             space_q = rhos(n_rho_index);        % поиск n-ной метрики
         end
         
@@ -250,17 +374,20 @@ classdef RecursiveReduction < handle
 %             space_q = mean(sum(group_modes==local_groups,2))/n_nearest; % среднее число привал.   
         end
         
+       
         % Критерий пиковой плотности вероятности
         function space_q = w_p_relative(obj, t_map, n_nearest)
-            [~, local_groups] = mink(obj.get_metrics(t_map),n_nearest+1, 2);  % получить порядок соседей для каждого вектора
+            [~, local_groups] = mink(obj.get_metrics(t_map),n_nearest, 2);  % получить порядок соседей для каждого вектора
             local_groups = obj.targets_ids(local_groups);       % № объекта -> классы
             group_modes = mode(local_groups,2);                 % превалирующий класс в группе
             space_q = 1-mean(sum(obj.weight_fun.*(group_modes~=local_groups),2))/n_nearest; % взвешенная сумма чужих   
         end
         
+        %% Прочие служебные функции
+        
         % Расчет метрик
         function [ rhos ] = get_metrics( obj, t_map )
-        %fRhoCalc Функция расчета метрики между объектами двух классов
+        %get_metrics Функция расчета метрики между объектами двух классов
         %   Функция принимает два масива с m(C1Data) и n(C2Data) векторами.
         %   Рассчитывает разности между всеми строками
         %   На выходе mxn матрица евклидовых метрик 
@@ -272,18 +399,10 @@ classdef RecursiveReduction < handle
             end
             fvs_red = obj.fvs(:,cor_map~=0);    % отобрать компоненты ВП, используемые для коррекции
             metr_dif = RecursiveReduction.get_correction_components(fvs_red,fvs_red).^2; % расчитать элементы корректировки
-            
             cor_map(cor_map==0) = [];       % убрать неизменные сегменты
-            
             metr_dif(cor_map.'<0,:,:) = -metr_dif(cor_map.'<0,:,:);
             metr_dif = squeeze(sum(metr_dif, 1));
-            
-%             metr_dif = squeeze(sum(...      % добавка вычисляется как линейная комбинация
-%                 metr_dif.*...               % добавок с множителями удал/добавл
-%                 repmat( reshape(cor_map,[],1),...   % репликации вектора множителей
-%                 [1,size(metr_dif,2),size(metr_dif,3)] ), ...
-%                 1));
-            
+
             if obj.upd  % если стоит признак обновления, то обновить
                 obj.rhos_sqr = obj.rhos_sqr + metr_dif;
                 obj.feat_map = t_map;
@@ -307,7 +426,7 @@ classdef RecursiveReduction < handle
             [n_samples, dim_fv] = size(obj.fvs);
             t_map = ones(1,dim_fv,'single');
             [~, sort_indexes] = mink(obj.get_metrics(t_map), n_nearest+1, 2);  % получить порядок соседей для каждого вектора
-            neq_matrix = zeros(n_samples, n_nearest); % предсоздание м-цы эквив-сти
+            neq_matrix = zeros(n_samples, n_nearest, 'like', obj.targets_ids); % предсоздание м-цы эквив-сти
             
             for i=1:n_nearest 
                  neq_matrix(:, i) = ...
@@ -318,11 +437,10 @@ classdef RecursiveReduction < handle
             
             obj.fvs(del_idx,:)=[];
             obj.rhos_sqr = zeros(size(obj.fvs,1),'like',obj.fvs);   % текущие метрики
-            obj.targets(del_idx,:)=[];
             obj.targets_ids(del_idx,:)=[];
             obj.alien_mask = and(...
                 obj.targets_ids~=obj.targets_ids.',...
-                triu(ones(size(obj.targets_ids,1),'logical'),1)); % маска расчета метрик
+                triu(ones(size(obj.targets_ids,1),'like',obj.targets_ids),1)); % маска расчета метрик
             obj.upd = update_status;
         end
        
