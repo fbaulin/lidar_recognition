@@ -122,6 +122,7 @@ classdef RPTools
                     end
                     return
             end
+            norm_factors(norm_factors==inf) = 0;
             for i = 1:n_rps
                 rps(i,:) = rps(i,:)*norm_factors(i);
             end
