@@ -182,7 +182,8 @@ classdef QualityCheck < handle
                 x_train = double(x_train);
                 x_test = double(x_test);
             end
-            for i_dim = 1:n_dims
+            n_arg_out = nargout;
+            parfor i_dim = 1:n_dims
                 x_train_red = x_train(:, obj.fs_map(i_dim,:));   % редуцировать обучающую выборку
                 x_test_red = x_test(:, obj.fs_map(i_dim,:));     % редуцировать тестовую выборку
                % обучить классификатор
@@ -190,7 +191,7 @@ classdef QualityCheck < handle
                 inst_clf = train(inst_clf,x_train_red.',y_train.','useGPU',obj.use_GPU);       % обучение
                 y_pred = inst_clf(x_test_red.').';                       % формирование ответов для тестовой выборки
                 score(i_dim) = perform(inst_clf, y_test.', y_pred.');    % расчет качетсва распознавания
-                if nargout>=4
+                if n_arg_out>=4
                     [~,i_tst] = max(y_test,[],2); [~,i_pred] = max(y_pred,[],2);
                     conf_mx{i_dim} = confusionmat(i_tst,i_pred);
                 end    % расчитать матрицу
@@ -199,6 +200,8 @@ classdef QualityCheck < handle
             if nargout>=3, varargout{2} = fs_maps; end      % если 3 аргумента выдать карту признаков
             if nargout>=4, varargout{3} = permute(cat(3,conf_mx{:}),[3 1 2]); end      % выдать матрицу ошибок
         end
+        
+        
         
     end
     
