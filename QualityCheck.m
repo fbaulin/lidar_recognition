@@ -7,6 +7,7 @@ classdef QualityCheck < handle
         classifier_type     % название классификатора 
         dimensions          % размерность пространства признаков
         clf                 % классификатор, поддерживающий configure и train
+        decision_mode       % принцип работы решающего устройства
         use_GPU = 'no'      % 
         fs_map              % карта признаков
         score_type          % тип меры качества распознавания
@@ -79,11 +80,13 @@ classdef QualityCheck < handle
                 'classifier_type', 'mlp',...    
                 'layers', [40 20 10],...
                 'performance', 'default',...
+                'decision_mode', 'metric',...   % если 'metric', то решение принимается по метрике, иначе - по 
                 'train_fun', 'default',...
                 'gpu', obj.use_GPU);
             [   obj.classifier_type, ...
                 layers, ...
                 performance,...
+                obj.decision_mode, ...
                 train_fun,...
                 obj.use_GPU     ] = kwargs.parse_input_cell(varargin);
                 
@@ -184,15 +187,20 @@ classdef QualityCheck < handle
             end
             n_arg_out = nargout;
             parfor i_dim = 1:n_dims
-                x_train_red = x_train(:, obj.fs_map(i_dim,:));   % редуцировать обучающую выборку
-                x_test_red = x_test(:, obj.fs_map(i_dim,:));     % редуцировать тестовую выборку
+                x_train_red = x_train(:, obj.fs_map(i_dim,:));   %#ok<PFBNS> % редуцировать обучающую выборку
+                x_test_red = x_test(:, obj.fs_map(i_dim,:));     %#ok<PFBNS> % редуцировать тестовую выборку
                % обучить классификатор
                 inst_clf = configure(obj.clf,x_train_red.',y_train.');   % конф. входного и выходного слоёв
                 inst_clf = train(inst_clf,x_train_red.',y_train.','useGPU',obj.use_GPU);       % обучение
                 y_pred = inst_clf(x_test_red.').';                       % формирование ответов для тестовой выборки
                 score(i_dim) = perform(inst_clf, y_test.', y_pred.');    % расчет качетсва распознавания
                 if n_arg_out>=4
-                    [~,i_tst] = max(y_test,[],2); [~,i_pred] = max(y_pred,[],2);
+                    switch obj.decision_mode
+                        case 'metric', y_pred = QualityCheck.metric_decision(y_pred);
+                        case 'max'
+                        otherwise, error(['Задан неизвестный метод принятия решения (', obj.decision_mode, ')'])
+                    end
+                    [~,i_tst] = max(y_test,[],2); [~,i_pred] = max(y_pred,[],2);    % one-hot -> индексы классов
                     conf_mx{i_dim} = confusionmat(i_tst,i_pred);
                 end    % расчитать матрицу
             end
@@ -239,6 +247,23 @@ classdef QualityCheck < handle
     end
     
     methods(Static=true)
+        
+        function y_dec = metric_decision(y_pred, varargin)
+        %   
+        %   Если расстояние до целевого вектора (one hot векторы) меньше порогового (по умолчанию (sqrt(2)/2), то
+        %   вектор заменяется на соответствующий one-hot вектор, иначе - на нулевой вектор.
+            if nargin==2, thresh_sqr = sqrt(varargin{1}); else thresh_sqr = 1/2; end
+            [n_samples, n_class] = size(y_pred);    % определить число классов
+            y_dec = zeros(n_samples, n_class, 'like', y_pred);
+            % цикл по классам 
+            for i=1:n_class
+                y_h = zeros(n_samples, n_class, 'like', y_pred);
+                y_h(:,i) = 1;
+                dists = sum((y_h-y_pred).^2, 2);    % рассчитать квадраты метрик до целевого вектора класса
+                y_dec(dists<thresh_sqr, i) = 1;            % забить все векторы для которых расстояние меньше порога
+            end
+            y_dec(sum(y_dec,2)>1,:) = 0; % выбить векторы, для которых более одного рещения 
+        end
         
         % Преобразовать выборку из набора ячеек в единый массив
         function [x,y] = unwrap_cell_data(fvs,meta,varargin)

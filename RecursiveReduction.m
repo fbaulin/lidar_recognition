@@ -19,7 +19,7 @@ classdef RecursiveReduction < handle
     
     properties(Hidden=true)
         upd=true    % обновить метрики на текущем расчете
-        gpu_supported_methods = {'nmin', 'buryi', 'refmmin', 'integrnmin', 'auhist'}
+        gpu_supported_methods = {'nmin', 'buryi', 'buryisum', 'refmmin', 'integrnmin', 'integrnmax', 'integr', 'auhist'}
     end
     
     methods
@@ -118,7 +118,10 @@ classdef RecursiveReduction < handle
             switch obj.reduction
                 case 'nmin',        rho_estimate = @(t_map) obj.nmin_metric_balanced(t_map, n_metrics_fraction);
                 case 'integrnmin',  rho_estimate = @(t_map) obj.integr_nmin(t_map, n_metrics_fraction);
+                case 'integrnmax',  rho_estimate = @(t_map) obj.integr_nmax(t_map, n_metrics_fraction);
+                case 'integr',      rho_estimate = @(t_map) obj.integr(t_map);
                 case 'buryi',       rho_estimate = @(t_map) obj.buryi(t_map);
+                case 'buryisum',       rho_estimate = @(t_map) obj.buryi_sum(t_map);
 %                 case 'mhist',   rho_estimate = @(t_map) obj.hist_acc(t_map, hist_edges, n_metrics_fraction);
                 case 'minalien',    rho_estimate = @(t_map) obj.minalien(t_map, n_nearest, m_technique, k_alien);
                 case 'auhist',      rho_estimate = @(t_map) obj.auhist(t_map);
@@ -289,19 +292,45 @@ classdef RecursiveReduction < handle
         function space_q = integr_nmin(obj, t_map, n_min_ratio)
             rhos = obj.get_metrics(t_map);
             rhos = sort(rhos(obj.alien_mask), 'ascend');
+%             if obj.upd, Loggers.log('integr_16db.log',{sum(t_map),rhos}, 'sep', ','); end
+            n_rho_index = floor(length(rhos)*n_min_ratio);
+            space_q = sum(rhos(1:n_rho_index));        % поиск n-ной метрики
+        end
+
+        function space_q = integr_nmax(obj, t_map, n_min_ratio)
+            rhos = obj.get_metrics(t_map);
+            rhos = sort(rhos(obj.alien_mask), 'ascend');
+%             if obj.upd, Loggers.log('integr_16db.log',{sum(t_map),rhos}, 'sep', ','); end
             n_rho_index = floor(length(rhos)*n_min_ratio);
             space_q = sum(rhos(n_rho_index:end));        % поиск n-ной метрики
         end
         
+        function space_q = integr(obj, t_map)
+            rhos = obj.get_metrics(t_map);
+            space_q = sum(rhos(obj.alien_mask));
+        end
+        
         function space_q = auhist(obj, t_map)
+            % Мера основанная на комбинации значения суммы метрик и меры AUC ROC
             rhos = obj.get_metrics(t_map);
             rhos = rhos(obj.alien_mask);
-            space_q = sum(rhos)/(length(rhos)*max(rhos));
+            sum_rhos = sum(rhos);
+            max_rhos = max(rhos);
+            space_q = sum_rhos*sum_rhos/(length(rhos)*max_rhos);
         end 
+        
+        function space_q = buryi_sum(obj, t_map)
+            rhos = obj.get_metrics(t_map);      % апдейт метрик
+%             n_samples = size(obj.fvs, 1);       % число объектов
+%             if obj.upd, Loggers.log('.\metric_log\buryi_16db.log',{sum(t_map),gather(sort(rhos(obj.alien_mask)))}, 'sep', ',','header',''); end
+            space_q = sum(rhos, 'all');
+            % получение массива метрик с использованием треугольной матрицы
+        end
         
         function space_q = buryi(obj, t_map)
             rhos = obj.get_metrics(t_map);      % апдейт метрик
 %             n_samples = size(obj.fvs, 1);       % число объектов
+%             if obj.upd, Loggers.log('.\metric_log\buryi_16db.log',{sum(t_map),gather(sort(rhos(obj.alien_mask)))}, 'sep', ',','header',''); end
             space_q = min(rhos(obj.alien_mask));
             % получение массива метрик с использованием треугольной матрицы
         end
