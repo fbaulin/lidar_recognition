@@ -19,7 +19,7 @@ classdef RecursiveReduction < handle
     
     properties(Hidden=true)
         upd=true    % обновить метрики на текущем расчете
-        gpu_supported_methods = {'nmin', 'buryi', 'buryisum', 'refmmin', 'integrnmin', 'integrnmax', 'integr', 'auhist'}
+        gpu_supported_methods = { 'test', 'nmin', 'buryi', 'buryisum', 'refmmin', 'integrnmin', 'integrnmax', 'integr', 'auhist', 'integr_min', 'minalien', 'prat'}
     end
     
     methods
@@ -116,10 +116,12 @@ classdef RecursiveReduction < handle
             m_technique =   kw.get_value(varargin, 'm_technique','mean');            % метод расчет
             k_alien =       kw.get_value(varargin, 'k_alien', 2);                   % число чужих
             switch obj.reduction
+                case 'test',        rho_estimate = @(t_map) obj.local_metric_sum(t_map, n_nearest);
                 case 'nmin',        rho_estimate = @(t_map) obj.nmin_metric_balanced(t_map, n_metrics_fraction);
                 case 'integrnmin',  rho_estimate = @(t_map) obj.integr_nmin(t_map, n_metrics_fraction);
                 case 'integrnmax',  rho_estimate = @(t_map) obj.integr_nmax(t_map, n_metrics_fraction);
                 case 'integr',      rho_estimate = @(t_map) obj.integr(t_map);
+                case 'integr_min',  rho_estimate = @(t_map) obj.integr_min(t_map);
                 case 'buryi',       rho_estimate = @(t_map) obj.buryi(t_map);
                 case 'buryisum',       rho_estimate = @(t_map) obj.buryi_sum(t_map);
 %                 case 'mhist',   rho_estimate = @(t_map) obj.hist_acc(t_map, hist_edges, n_metrics_fraction);
@@ -134,6 +136,7 @@ classdef RecursiveReduction < handle
                     obj.refine_aliens(k_alien, n_nearest)
                     rho_estimate = @(t_map) obj.buryi(t_map);
                 case 'fisher',      obj.heurist = 'fisher';
+                
                 otherwise,      error('Неправильно задан метод редукции. Поддерживаемые: nmin, buryi, mhist, minalien')
             end
             if obj.use_gpu
@@ -255,7 +258,9 @@ classdef RecursiveReduction < handle
             fprintf(repmat('\b', 1, line_len));
             
         end
-            
+           
+        
+        
         %% Меры качества пространства
         
         % Расчет максимизируемого числа своих
@@ -263,7 +268,8 @@ classdef RecursiveReduction < handle
             
             n_samples = size(obj.fvs, 1);
             [~, sort_indexes] = mink(obj.get_metrics(t_map), n_nearest+1, 2);  % получить порядок соседей для каждого вектора
-            neq_matrix = zeros(n_samples, n_nearest); % предсоздание м-цы эквив-сти
+            %FIXME: В некоторых случаях ближайший может не быть самим вектором (когда до других векторов тоже 0)
+            neq_matrix = zeros(n_samples, n_nearest); % предсоздание м-цы эквив-сти 
             
             for i=1:n_nearest 
                  neq_matrix(:, i) = ...
@@ -276,6 +282,24 @@ classdef RecursiveReduction < handle
                     q_sep = sum(sum(neq_matrix, 2)>(k_alien))/n_samples;
             end
             space_q = 1 - q_sep;
+        end
+        
+        function space_q = local_metric_sum(obj, t_map, n_nearest)            
+        %local_metric_sum выполняет оценку суммы минимальных метрик с заданными ближайшими соседями
+        %NOTE: ИСПОЛЬЗОВАНИЕ НЕЭФФЕКТИВНО
+            n_samples = size(obj.fvs, 1);
+            rhos = obj.get_metrics(t_map);                                  % матрица метрик
+            rhos(1:n_samples+1:end)=nan;
+            least_rhos = zeros(n_samples, n_nearest,'like', obj.fvs);       % матрица наименьших метрик
+            neq_matrix = false(n_samples, n_nearest,'like', obj.alien_mask);
+            for i=1:n_nearest 
+                [least_rhos(:,i), sort_indexes] = min(rhos,[], 2);                  % минимальная метрика
+                rhos(sub2ind(size(rhos), (1:n_samples).', sort_indexes)) = nan;
+                neq_matrix(:,i) = ...
+                    obj.targets_ids == obj.targets_ids(sort_indexes); % i+1, т.к. 1й - сам вектор признаков
+            end
+            
+            space_q = sum(least_rhos(neq_matrix),'all')-sum(least_rhos(~neq_matrix),'all');
         end
         
         function space_q = nmin_metric_balanced(obj, t_map, n_min_ratio)
@@ -295,6 +319,15 @@ classdef RecursiveReduction < handle
 %             if obj.upd, Loggers.log('integr_16db.log',{sum(t_map),rhos}, 'sep', ','); end
             n_rho_index = floor(length(rhos)*n_min_ratio);
             space_q = sum(rhos(1:n_rho_index));        % поиск n-ной метрики
+        end
+        
+        function space_q = integr_min(obj, t_map)
+        % оценить сумму метрик между ближайшими соседями другого класса
+        %NOTE: ИСПОЛЬЗОВАНИЕ НЕЭФФЕКТИВНО
+            rhos = obj.get_metrics(t_map);
+            rhos(~or(obj.alien_mask,obj.alien_mask.')) = NaN;
+            rhos = min(rhos,[],2);
+            space_q = sum(rhos);                % 
         end
 
         function space_q = integr_nmax(obj, t_map, n_min_ratio)
