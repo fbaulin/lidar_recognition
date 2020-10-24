@@ -1,6 +1,7 @@
-classdef Slozhno < handle
-    %Slozhno Support functions for slozhno experiment
-    %   Slozhno experiment
+classdef SystemModel < handle
+    %SystemModel Модель ЛЛС, функции для обработки данных такой системой
+    %   SystemModel Содержит функции, реализующие модель ЛЛС; программы обработки данных, построения карт множеств
+    %   векторов признаков.
     %#ok<*PROPLC>
     properties
                 
@@ -27,7 +28,7 @@ classdef Slozhno < handle
     methods
         
         % конструктор
-        function obj = Slozhno() 
+        function obj = SystemModel() 
             
             obj.resol_ns = obj.window_m * 2 / obj.icr_dim / 3e8 * 1e9;      % условное временное разрешение ИХР, нс
             obj.obj_lst ={ 'brk3x1' 'con2x1','con3x1','cyl3x1','sph3x1' };
@@ -103,7 +104,7 @@ classdef Slozhno < handle
             % фильтрация
             if ~strcmp(lp_band_mhz,'n')                         % если передано 
                 n_filter = 2;
-                rps = Slozhno.bworth_filter(...
+                rps = SystemModel.bworth_filter(...
                     rps, obj.resol_ns, lp_band_mhz, n_filter);  % фильтрация
                 fprintf('[ФНЧ(%dп) Fф=%0.1fМГц]', ...
                     n_filter, lp_band_mhz);
@@ -152,7 +153,7 @@ classdef Slozhno < handle
                     fvs_2 = fvs_2./fv_mods; % нормировка для расчета угловых метрик
                     clear fv_mods
                     bms_mod{i_obj,j_obj} = 2*asin(...
-                        Slozhno.calc_b_metrics(fvs_1,fvs_2,8)/2); % расчет угловых метрик
+                        SystemModel.calc_b_metrics(fvs_1,fvs_2,8)/2); % расчет угловых метрик
                     bms_counts{i_obj,j_obj} = ...
                         histcounts(bms_mod{i_obj,j_obj}, gpu_hist_bins );
                     bms_counts{i_obj,j_obj}=gather(bms_counts{i_obj,j_obj});
@@ -172,7 +173,7 @@ classdef Slozhno < handle
                 fvs_1 = gpuArray(fvs{i_obj});   % загрузка вектора признаков в ГП
                 for j_obj = (i_obj+1):n_obj
                     fvs_2 = gpuArray(fvs{j_obj});
-                    bms_mod{i_obj,j_obj} = Slozhno.calc_b_metrics(fvs_1,fvs_2); % расчет угловых метрик
+                    bms_mod{i_obj,j_obj} = SystemModel.calc_b_metrics(fvs_1,fvs_2); % расчет угловых метрик
                     bms_counts{i_obj,j_obj} = ...
                         histcounts(bms_mod{i_obj,j_obj}, gpu_hist_bins );
                     bms_counts{i_obj,j_obj}=gather(bms_counts{i_obj,j_obj});
@@ -194,7 +195,7 @@ classdef Slozhno < handle
                 for j_obj = i_obj+1:n_obj
                     fvs_2 = gpuArray(fvs{j_obj});
                     obj_names = {obj.obj_lst{i_obj} obj.obj_lst{j_obj}};
-                    bms = gather(Slozhno.calc_b_vectors(fvs_1, fvs_2));
+                    bms = gather(SystemModel.calc_b_vectors(fvs_1, fvs_2));
                     save([...
                         '.\bms_vectors\' obj.scan_type ' '...
                         obj.obj_lst{i_obj} '-' obj.obj_lst{j_obj} ' ',...
@@ -209,15 +210,19 @@ classdef Slozhno < handle
         function [ fvs ] = transform(obj, rps, varargin)
         %TRANSFORM Сформировать вектора признаков
         %   Выполняет преобразование с использованием методов класса RPTools
+        %   Если rps - массив ячеек, возвращает массив ячеек, если же rps - матрица,
+        %   то возвращает матрицу.
         %   Аргументы:
-        %   .obj        
+        %   obj        
         %   rps         - матрица ячеек ДП
         %   [t_type]    - тип преобразования
         %   [wave_name] - обозначение вейвлета
             if nargin>=3;   t_type = varargin{1};   % тип преобразования
             else; t_type = obj.t_type; end 
-            if nargin>=4; wave_name = varargin{2};  % тип вейвлета
-            else; wave_name = obj.wave_name; end
+            if any(strcmp(t_type, {'cwt', 'acwt', 'wt'}))
+                if nargin>=4;   wave_name = varargin{2};  % тип вейвлета
+                else;           wave_name = obj.wave_name; end
+            end
             switch t_type
                 case 'none'
                     tr = @(rp) rp;
@@ -231,8 +236,14 @@ classdef Slozhno < handle
                     tr = @(rp) RPTools.acwt(rp,wave_name);
                 case 'wt'   
                     tr = @(rp) RPTools.wt(rp,wave_name);
-                case 'pca'   
-                    tr = @(rp) RPTools.pca(rp);
+%TODO: Закомментировано потому, что pca должен выполняться для всей выборки сразу и не может быть выполнен для каждого
+%объекта по отдельности
+%                 case 'pca'   
+%                     tr = @(rp) RPTools.pca(rp);
+%                 case 'dpca'
+%                     tr = @(x, y) obj.dpca(x,y);
+                otherwise
+                    error(['Неизвестный тип преобразования (', t_type, ')'])
             end
             if iscell(rps); fvs = cellfun(tr,rps,'UniformOutput',0);
             else;           fvs = tr(rps); 
@@ -283,7 +294,7 @@ classdef Slozhno < handle
             for i_obj = 1:n_obj
                 gpu_fvs = (fvs{i_obj});   
                 gpu_fvs = gpu_fvs./sum(gpu_fvs,2);  % нормировка для вычисления угловой меры
-                wms = asin(Slozhno.calc_w_metrics(gpu_fvs)/2)*2;  % расчет угловой метрики
+                wms = asin(SystemModel.calc_w_metrics(gpu_fvs)/2)*2;  % расчет угловой метрики
                 clear gpu_fvs;
                 wms_counts{1,i_obj} = (...
                         histcounts(wms, hist_bins )); % сбор данных
@@ -441,7 +452,7 @@ classdef Slozhno < handle
             rhos = zeros(n_obj(1), n_obj(2), 'like', c1);
             n_batch = length(batch_edges)-1;
             for i_batch=1:n_batch
-                rhos = rhos+sum( Slozhno.calc_b_vectors( ...
+                rhos = rhos+sum( SystemModel.calc_b_vectors( ...
                     c1(:,batch_edges(i_batch):batch_edges(i_batch+1)-1),...
                     c2(:,batch_edges(i_batch):batch_edges(i_batch+1)-1)...
                     ).^2 , 3);
@@ -553,7 +564,7 @@ classdef Slozhno < handle
 
             [~,tr_s_wms] = sort(wms);   % матрица пререхода к сортированному списку
             tr_s_wms = uint32(tr_s_wms);
-            tr_wms2rp = Slozhno.met2rp(n_rp);       % матрица перехода от индексов вектора метрик к индексам ДП
+            tr_wms2rp = SystemModel.met2rp(n_rp);       % матрица перехода от индексов вектора метрик к индексам ДП
             en_rp = ones(n_thr, n_rp,'logical');    % создать вектор наличия ДП (матрица)
             en_wms = ones(1,n_wms,'logical');       % матрица наличия метрик
             i_thr = 1;                  % счетчик исследуемого диапазона метрик
@@ -573,7 +584,7 @@ classdef Slozhno < handle
                     min_met = zeros(1,2);       % буфер под мин. метрику
                     i_ex_wms = cell(2,1);       % буфер под индексы исключ метрик
                     for i = 1:2                 
-                        tmp = Slozhno.rp2met(n_rp, i_rp(i));% получение индексов всех метрик этого элемента
+                        tmp = SystemModel.rp2met(n_rp, i_rp(i));% получение индексов всех метрик этого элемента
                         i_ex_wms{i} = tmp(en_wms(tmp));     % искл-ие инд-ов ранее искл-х метрик
                         tmp = sort(wms(i_ex_wms{i}));
                         min_met(i) = tmp(2);    % запомнить минимальную метрику
@@ -641,7 +652,7 @@ classdef Slozhno < handle
             cur_rho = ones(n_obj-1, n_obj);   % контейнер метрик
             for i_obj = 1:n_obj-1
                 for j_obj = (i_obj+1):n_obj
-                    cur_rho(i_obj,j_obj) = min(Slozhno.calc_b_metrics(...
+                    cur_rho(i_obj,j_obj) = min(SystemModel.calc_b_metrics(...
                         fvs_red{i_obj},fvs_red{j_obj}),[],'all');  % расчет минимальной метрики для i-j сочетания
                 end
             end
@@ -672,7 +683,7 @@ classdef Slozhno < handle
             n_met_thresh = ceil((n_met_total * n_min_ratio)./m_ij);  % 
             for i_case = 1:length(m_ij)
                 cur_rho{i_case} = sort( reshape(...
-                    Slozhno.calc_b_metrics(fvs_red{asp_i(i_case)}, fvs_red{asp_j(i_case)}), ...
+                    SystemModel.calc_b_metrics(fvs_red{asp_i(i_case)}, fvs_red{asp_j(i_case)}), ...
                     1,[]), 'ascend');  % расчет метрик для сочет., перевод в строку и сортировка
 
                 cur_rho{i_case} = repmat( ...
@@ -707,7 +718,7 @@ classdef Slozhno < handle
             n_met_thresh = ceil((n_met_total * n_min_ratio)./m_ij);  % 
             for i_case = 1:length(m_ij)
                 cur_rho{i_case} = sort( reshape(...
-                    Slozhno.calc_b_metrics(fvs_red{asp_i(i_case)}, fvs_red{asp_j(i_case)}), ...
+                    SystemModel.calc_b_metrics(fvs_red{asp_i(i_case)}, fvs_red{asp_j(i_case)}), ...
                     1,[]), 'ascend');  % расчет метрик для сочет., перевод в строку и сортировка
 
                 cur_rho{i_case} = repmat( ...
@@ -722,7 +733,7 @@ classdef Slozhno < handle
         % Оценка пространства признаков по методу гистограмм
         function cur_rho = hist_acc(fvs_red, hist_bins, n_metrics_fraction)
         % расчет гистограммы метрик
-                    hist_counts = Slozhno.cpu_linear_histcounts(fvs_red,hist_bins);         % гистограмма
+                    hist_counts = SystemModel.cpu_linear_histcounts(fvs_red,hist_bins);         % гистограмма
                     hist_counts = vertcat(hist_counts{triu(ones(length(fvs_red),'logical'),1)});  % вытащить значения по верхней треугольной матрице без диагонали
                     hist_counts = sum(hist_counts,1);                   % просуммировать
                     acc_hist = cumsum(hist_counts);                     % интеграл от гист
@@ -761,16 +772,16 @@ classdef Slozhno < handle
             switch reduction_type
                 case 'nmin'
                     if range(arrayfun(@(i) size(fvs{i},1),1:n_obj))==0  % если все одинаковые, то считаем выборку сбалансированной
-                        rho_estimate = @(fvs) Slozhno.nmin_metric_balanced(fvs, n_metrics_fraction);
+                        rho_estimate = @(fvs) SystemModel.nmin_metric_balanced(fvs, n_metrics_fraction);
                     else
-                        rho_estimate = @(fvs) Slozhno.nmin_metric(fvs, n_metrics_fraction);
+                        rho_estimate = @(fvs) SystemModel.nmin_metric(fvs, n_metrics_fraction);
                     end
                 case 'buryi'
-                    rho_estimate = @(fvs) Slozhno.buryi(fvs);
+                    rho_estimate = @(fvs) SystemModel.buryi(fvs);
                 case 'mhist'
-                    rho_estimate = @(fvs) Slozhno.hist_acc(fvs, hist_edges, n_metrics_fraction);
+                    rho_estimate = @(fvs) SystemModel.hist_acc(fvs, hist_edges, n_metrics_fraction);
                 case 'minalien'
-                    rho_estimate = @(fvs) Slozhno.minalien(fvs, n_nearest, m_technique, k_alien);
+                    rho_estimate = @(fvs) SystemModel.minalien(fvs, n_nearest, m_technique, k_alien);
                 otherwise
                     error('Неправильно задан метод редукции. Поддерживаемые: nmin, buryi, mhist, minalien')
             end
@@ -811,7 +822,7 @@ classdef Slozhno < handle
             bms_counts = cell(n_obj, n_obj);    % матрица отсчетов внешних метрик
             for i_obj = 1:(n_obj-1)             % расчет метрик
                 for j_obj = (i_obj+1):n_obj
-                    bms_mod{i_obj,j_obj} = Slozhno.calc_b_metrics(fvs{i_obj},fvs{j_obj}); % расчет угловых метрик
+                    bms_mod{i_obj,j_obj} = SystemModel.calc_b_metrics(fvs{i_obj},fvs{j_obj}); % расчет угловых метрик
                     bms_counts{i_obj,j_obj} = ...
                         histcounts(bms_mod{i_obj,j_obj}, hist_bins );
                 end
@@ -845,7 +856,7 @@ classdef Slozhno < handle
             else
                 error('Ошибка в формате аргументов')
             end
-            q_sep = Slozhno.nn_separability(features, targets, ...
+            q_sep = SystemModel.nn_separability(features, targets, ...
                 'n_nearest',n_nearest, 'm_technique',m_technique, 'k_alien', k_own);
         end
         
@@ -860,7 +871,7 @@ classdef Slozhno < handle
             [n_nearest, m_technique, k_alien] =  ...
                 kwargs.parse_input_cell(varargin);
             n_samples = size(features, 1);
-            rhos = Slozhno.calc_b_metrics(features, features);  % расчитать метрики
+            rhos = SystemModel.calc_b_metrics(features, features);  % расчитать метрики
             [~, sort_indexes] = mink(rhos, n_nearest+1, 2);                  % сортировать
             clear('rhos')
             [~, ~, targets] = unique(targets_str);        % преобразовать имена в id-номера
@@ -901,7 +912,7 @@ classdef Slozhno < handle
             fvs = vertcat(fvs{:});
             
             n_samples = size(fvs, 1);
-            rhos = Slozhno.calc_b_metrics(fvs, fvs);  % расчитать метрики
+            rhos = SystemModel.calc_b_metrics(fvs, fvs);  % расчитать метрики
             [~, sort_indexes] = sort(rhos, 2);                  % сортировать
             clear('rhos')
             neq_matrix = zeros(n_samples, n_nearest); % предсоздание м-цы эквив-сти
