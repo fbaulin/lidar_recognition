@@ -9,11 +9,9 @@ classdef RPTools
         function [rps] = make_rps(icrs, gauss_hwidth)
             % гауссовская функция по трем СКО с шириной gauss_width по
             % полувысоте
-            hw2sig = 2.35;       % отношение ширины по половине к сигма
-            sig = gauss_hwidth/hw2sig; % отсчетов в одной сигма
-            imp = gaussmf(...
-                linspace(-4,4, sig*8),... 2.36 *m ),... %
-                [1,0]);
+            hw2sig = 2.35;              % отношение ширины по половине к сигма
+            sig = gauss_hwidth/hw2sig;  % отсчетов в одной сигма
+            imp = exp(-t_axis.^2/2);    % импульс ЗИ
             rps = conv2(icrs, imp);     % свертка ИХР с огибающей импульса
             if mod(size(rps,2),2)
                 rps = rps(:,1:end-1);   % если нечетное число отсчетов, то вырезать последний
@@ -607,6 +605,45 @@ classdef RPTools
             pca_rps = rps*coeff;
         end
         
+                % DCA
+        function [dca_rps] = dca(rps, trgs)
+            % Рассчитать разностные векторы (nan на пустых)
+            % Найти метрики
+            % Найти ближайшие
+            % Создать для них матрицу векторов, конкатинировать и добавить обратные
+            [object_names, ~, ci] = unique(trgs,'rows');
+            [~, dim_rps] = size(rps);
+            n_obj = size(object_names,1);
+            minrho = cell(1,(n_obj^2));
+            for i_obj = 1:(n_obj-1)
+                for j_obj = (i_obj+1):n_obj
+                    
+                    c1 = rps(ci==i_obj, :);    % формирование первой матрицы
+                    c2 = rps(ci==j_obj, :);    % формирование воторой матрицы
+                    n_fvs = [size(c1,1) size(c2,1)];    % определение числа реализаций
+                    vrhos = repmat(c1.',1,1,n_fvs(2)) - repmat(...
+                        permute(c2,[2 3 1]), 1, n_fvs(1), 1);   % расчет разностных векторов
+                    
+                    rhos = sum((vrhos).^2, 1);              % расчет метрик ( матр 1 х n_fvs(1) x n_fvs(2) )
+                    [~, i_obj_mins] = min(rhos,[],3);
+                    [~, j_obj_mins] = min(rhos,[],2);
+                    
+                    vrhos = reshape(vrhos, dim_rps, []);
+                    i_obj_mins = sub2ind(size(squeeze(rhos)), (1:n_fvs(1)).', i_obj_mins(:));
+                    j_obj_mins = sub2ind(size(squeeze(rhos)), j_obj_mins(:), (1:n_fvs(2)).');
+                    minrho{i_obj,j_obj} = vrhos(:, i_obj_mins).';
+                    minrho{j_obj,i_obj} = vrhos(:, j_obj_mins).';
+                    
+                end
+            end
+            clear vrhos;
+            minrho = vertcat(minrho{:});
+            minrho = vertcat(minrho, -minrho);
+            coeff = pca(minrho);
+            dca_rps = rps*coeff;
+            
+        end
+        
     % Отображение и прочее
 
         % Получение карты преобразования/названий признаков
@@ -680,6 +717,8 @@ classdef RPTools
                     feature_map = horzcat(horzcat(coefs{:,1}));
                 case 'pca'
                     feature_map = num2str(0:coef_map-1, 'pca_%03d,');
+                case 'dca'
+                    feature_map = num2str(0:coef_map-1, 'dca_%03d,');
                 otherwise
                     warning('Неизвестное преобразование');
             end
