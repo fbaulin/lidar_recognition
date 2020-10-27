@@ -261,8 +261,13 @@ classdef SystemModel < handle
         %   [wave_name] - обозначение вейвлета
             if nargin>=3;   t_type = varargin{1};   % тип преобразования
             else; t_type = obj.t_type; end 
-            if nargin>=4; wave_name = varargin{2};  % тип вейвлета
-            else; wave_name = obj.wave_name; end
+            if any(strcmp(t_type, {'cwt', 'acwt', 'wt'}))
+                if nargin>=4;   wave_name = varargin{2};  % тип вейвлета
+                else;           wave_name = obj.wave_name; end
+            elseif strcmp(t_type, 'dca')
+                trgs = varargin{2};
+            end
+            
             switch t_type
                 case 'none'
                     fvs =  rps;
@@ -281,6 +286,9 @@ classdef SystemModel < handle
                     [fvs, coef_map] = RPTools.wt(rps,wave_name);
                 case 'pca'
                     [fvs] = RPTools.pca(rps);
+                    coef_map = size(fvs,2);
+                case 'dca'
+                    [fvs] = RPTools.dca(rps, trgs);
                     coef_map = size(fvs,2);
             end
             
@@ -765,7 +773,7 @@ classdef SystemModel < handle
                 'm_technique','mean',...    % метод расчет
                 'k_alien',2 ...               % число своих
                 );
-            [dimensions, reduction_type, n_metrics_fraction, hist_edges, obj_weights, ...
+            [dimensions, reduction_type, n_metrics_fraction, hist_edges, ~, ...
                 n_nearest, m_technique, k_alien] =  ...
                 kwargs.parse_input_cell(varargin);
             % настройка специфическая для метода

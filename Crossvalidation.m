@@ -82,7 +82,7 @@ classdef Crossvalidation
                 = kwargs.parse_input_cell(varargin);
 
             if strcmp(t_types, 'legacy')
-                t_types = {'none'   'fft'   'afft'  'cwt'   'acwt'   'wt'    'pca'};
+                t_types = {'none'   'fft'   'afft'  'cwt'   'acwt'   'wt'    'pca' 'dca'};
                 t_types = t_types(t_select_v);  t_bfuns = t_bfuns(t_select_v);
                 warning('Этот метод ввода преобразования устаревший и скоро будет удален')
             end

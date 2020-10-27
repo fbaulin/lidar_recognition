@@ -15,10 +15,10 @@ if ~exist('external_input','var') % ручной запуск скрипта
     cv_method = 'kfold'
     
 end
-t_types = {'none' 'fft' 'afft' 'cwt' 'acwt' 'wt' 'pca'};
+t_types = {'none' 'fft' 'afft' 'cwt' 'acwt' 'wt' 'pca' 'dca'};
 t_types = t_types(t_select_v);
 
-t_names = {'no' 'Fourier' 'amplitude Fourier' 'comlex wavelet' 'complex wavelet' 'wavelet', 'PCA'};
+t_names = {'no' 'Fourier' 'amplitude Fourier' 'comlex wavelet' 'complex wavelet' 'wavelet', 'PCA', 'DCA'};
 t_names = t_names(t_select_v);
 
 % for rm =  rm% 'buryi' 'nmin' }

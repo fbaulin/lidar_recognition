@@ -29,11 +29,11 @@ if ~exist('external_input','var')
     imp_hwidth_ns = 5;          % продолжительность импульса по половинному уровню, нс
     mse_noise = 0.0001;
     show_graphics=1;
-    t_bfuns = {'x'      'x'     'x'     'dtf2'  'dtf2' 'sym5'   'x'};
+    t_bfuns = {'x'      'x'     'x'     'dtf2'  'dtf2' 'sym5'   'x', 'x'};
     cv_method = 'kfold';
     cv_param = 4;
 end
-t_types = {'none'   'fft'   'afft'  'cwt'   'acwt' 'wt'     'pca'};
+t_types = {'none'   'fft'   'afft'  'cwt'   'acwt' 'wt'     'pca' 'dca'};
 t_types = t_types(t_select_v);
 t_bfuns = t_bfuns(t_select_v); 
 

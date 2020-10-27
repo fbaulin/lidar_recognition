@@ -11,6 +11,7 @@ classdef RPTools
             % полувысоте
             hw2sig = 2.35;              % отношение ширины по половине к сигма
             sig = gauss_hwidth/hw2sig;  % отсчетов в одной сигма
+            t_axis = linspace(-4,4, sig*8);
             imp = exp(-t_axis.^2/2);    % импульс ЗИ
             rps = conv2(icrs, imp);     % свертка ИХР с огибающей импульса
             if mod(size(rps,2),2)
