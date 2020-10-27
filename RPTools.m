@@ -601,17 +601,60 @@ classdef RPTools
         end
         
         % PCA
-        function [pca_rps] = pca(rps)
-            coeff = pca(rps);
-            pca_rps = rps*coeff;
+        function [varargout] = pca(rps)
+        %pca Преобразование Карунена-Лоэва
+            coeff = pca(rps);       % матрица преобразования
+            pca_rps = rps*coeff;    % преобразование
+            varargout{1} = pca_rps;
+            if nargout>1, varargout{2} = coeff; end
         end
         
-                % DCA
-        function [dca_rps] = dca(rps, trgs)
-            % Рассчитать разностные векторы (nan на пустых)
-            % Найти метрики
-            % Найти ближайшие
-            % Создать для них матрицу векторов, конкатинировать и добавить обратные
+        function [dca_rps] = dca_total(rps,trgs)
+        %dca Метод анализа локальных разностных компонент
+        % Выполняется расчет разностных векторов между векторами признаков, принадлежащими разным объектам
+        % Это множество векторов дополняется обратными векторами. 
+        % Полученное множество загоняется в АГК, в результате чего формируется преобразовнное множество
+        % Аргументы:
+        %   rps - входное множество (ДП)
+        %   trgs - целевые векторы
+        % Вывод:
+        %   Результат преобразования[, коэффициенты преобразования: x*coeff]
+            [object_names, ~, ci] = unique(trgs,'rows');
+            [~, dim_rps] = size(rps);
+            n_obj = size(object_names,1);
+            rho_cell = cell(1,(n_obj^2));
+            for i_obj = 1:(n_obj-1)
+                for j_obj = (i_obj+1):n_obj
+                    
+                    c1 = rps(ci==i_obj, :);    % формирование первой матрицы
+                    c2 = rps(ci==j_obj, :);    % формирование воторой матрицы
+                    n_fvs = [size(c1,1) size(c2,1)];    % определение числа реализаций
+                    vrhos = repmat(c1.',1,1,n_fvs(2)) - repmat(...
+                        permute(c2,[2 3 1]), 1, n_fvs(1), 1);   % расчет разностных векторов
+                    vrhos = reshape(vrhos, dim_rps, []);
+                    rho_cell{i_obj,j_obj} = vrhos.';
+                end
+            end
+            clear vrhos;
+            rho_cell = vertcat(rho_cell{:});
+            rho_cell = vertcat(rho_cell, -rho_cell);
+            coeff = pca(rho_cell);  % матрица преобразования
+            dca_rps = rps*coeff;    % преобразование
+            
+        end
+        
+        % DCA
+        function [varargout] = dca(rps, trgs)
+        %dca Метод анализа локальных разностных компонент
+        % Выполняется расчет разностных векторов между ближайшими векторами признаков, принадлежащими разным объектам
+        % Это множество векторов дополняется обратными векторами. 
+        % Полученное множество загоняется в АГК, в результате чего формируется преобразовнное множество
+        % Аргументы:
+        %   rps - входное множество (ДП)
+        %   trgs - целевые векторы
+        % Вывод:
+        %   Результат преобразования[, коэффициенты преобразования: x*coeff]
+        
             [object_names, ~, ci] = unique(trgs,'rows');
             [~, dim_rps] = size(rps);
             n_obj = size(object_names,1);
@@ -639,20 +682,21 @@ classdef RPTools
             end
             clear vrhos;
             minrho = vertcat(minrho{:});
-            minrho = vertcat(minrho, -minrho);
-            coeff = pca(minrho);
-            dca_rps = rps*coeff;
-            
+            minrho = vertcat(minrho, -minrho);  % обратные векторы
+            coeff = pca(minrho);    % матрица преобразования
+            dca_rps = rps*coeff;    % преобразование
+            varargout{1} = dca_rps;
+            if nargout>1, varargout{2} = coeff; end
         end
         
     % Отображение и прочее
 
         % Получение карты преобразования/названий признаков
         function [ feature_map ] = get_feature_map( transform_type, coef_map )
-            %GET_FEATURE_MAP Сформировать названия коэффициентов
-            %   Ввод:
-            %   transform_type  - название преобразования
-            %   coef_map        - карта коэффициентов
+        %GET_FEATURE_MAP Сформировать названия коэффициентов
+        %   Ввод:
+        %   transform_type  - название преобразования
+        %   coef_map        - карта коэффициентов
             switch transform_type
                 case 'none'
                     feature_map = num2str(0:coef_map-1, 't_%03d,');
