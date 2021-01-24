@@ -518,6 +518,7 @@ classdef Crossvalidation
             hold on;
             n_files = size(datastruct,2); 
             curve_h = zeros(1,n_files);
+            p_err_cmx = cell(1,n_files);
 
             for i_file = 1:n_files
                 conf_mx = datastruct(i_file).('conf_mx');
@@ -528,7 +529,7 @@ classdef Crossvalidation
                 conf_mx(mask)=0;
                 err_samp = sum(conf_mx,[2 3]);
                 p_err = err_samp./total_samp;
-                
+                p_err_cmx{i_file} = p_err;
                 curve_h(i_file) = stem(...
                     datastruct(i_file).('dimensions'),p_err,...
                     [ ':' Crossvalidation.marker_type{i_file} 'k']);
@@ -537,6 +538,16 @@ classdef Crossvalidation
             xticks(datastruct(i_file).('dimensions'))
             legend(curve_h,leg_str)
             title(['P_{err} (' tit_str ')'])
+            Crossvalidation.save_p_err(p_err_cmx, leg_str);
+        end
+        
+        function save_p_err(p_err_cells,leg_str)
+            curve_sizes = cellfun(@length, p_err_cells);
+            if length(unique(curve_sizes))==1
+                p_err_mx = horzcat(p_err_cells{:});
+                save('p_err.mat','p_err_mx', 'leg_str');
+            end
+            
         end
         
         % Visualize confusion matricies

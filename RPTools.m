@@ -159,6 +159,7 @@ classdef RPTools
                     snap_index = RPTools.find_center(rand_rps);
                 case 'max_peak'     % характерная точка - глобальный максимум
                     [~, snap_index] = max(rand_rps,[],2);
+                    snap_index = snap_index+randn(n_rps,1)*1;
                 case 'none'         % ДП используются как есть
                     rps = rand_rps;
                     return
@@ -459,7 +460,7 @@ classdef RPTools
     % Интегральные преобразования
         
         % Амплитудное ПФ
-        function [ FeatDataF ] = afft( inData )
+        function [ FeatDataF ] = afft( inData, varargin )
         %AFFT Преобразование в пространство признаков Фурье
         %   Производит построчное преобразование в пространство признаков Фурье
         %   На входе матрица inData: каждая строка - ДП
@@ -468,6 +469,10 @@ classdef RPTools
         %   После вырезания симметричной части спектра домножает компоненты
         %   для которых симметричная составляющая усечена на sqrt2.
             [ ~ , nDim] = size(inData);
+%             nDim = 2*nDim;  % удвоение для уравнивания числа отсчётоы ПФ и ВП
+            if nargin==2
+                nDim = varargin{1};
+            end
             FeatDataF = abs(fft(inData,nDim,2))/sqrt(nDim);                 % БПФ вдоль второго измерения
             % Последнюю гармонику исключаем, т.к. fд относительно
             % высока. Нулевую оставляем, т.к. из-за нормировки

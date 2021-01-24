@@ -197,7 +197,7 @@ classdef QualityCheck < handle
                 inst_clf = configure(obj.clf,x_train_red.',y_train.');   % конф. входного и выходного слоёв
                 inst_clf = train(inst_clf,x_train_red.',y_train.','useGPU',obj.use_GPU);       % обучение
                 y_pred = inst_clf(x_test_red.').';                       % формирование ответов для тестовой выборки
-                score(i_dim) = perform(inst_clf, y_test.', y_pred.');    % расчет качетсва распознавания
+                score(i_dim) = perform(inst_clf, y_test.', y_pred.');    % расчет качества распознавания
                 if n_arg_out>=4
                     switch obj.decision_mode
                         case 'metric', y_pred = QualityCheck.metric_decision(y_pred);
