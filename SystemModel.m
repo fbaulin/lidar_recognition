@@ -236,12 +236,12 @@ classdef SystemModel < handle
                     tr = @(rp) RPTools.acwt(rp,wave_name);
                 case 'wt'   
                     tr = @(rp) RPTools.wt(rp,wave_name);
-%TODO: Закомментировано потому, что pca должен выполняться для всей выборки сразу и не может быть выполнен для каждого
+%TODO: pca должен выполняться для всей выборки сразу и не может быть выполнен для каждого
 %объекта по отдельности
-%                 case 'pca'   
-%                     tr = @(rp) RPTools.pca(rp);
-%                 case 'dpca'
-%                     tr = @(x, y) obj.dpca(x,y);
+                case 'pca'   
+                    tr = @(rp) RPTools.pca(rp);
+                case 'dpca'
+                    tr = @(x, y) obj.dpca(x,y);
                 otherwise
                     error(['Неизвестный тип преобразования (', t_type, ')'])
             end
