@@ -40,12 +40,14 @@ classdef RPTools
                 %TODO: Добавить более точный расчет С/Ш
                 signal_power = num2cell(signal_power/max(sigma)^2); % считать худшее с/ш
             end
-            [meta(:).snr] = deal(signal_power{:});
-            [~,i_min] = min([meta.snr]); [~,i_max] = max([meta.snr]);
-            fprintf('от %01.1f(%s(%+03d,%+03d)\x00B0) до %01.1f(%s(%+03d,%+03d)\x00B0)\n',...
-                meta(i_min).snr,meta(i_min).name, meta(i_min).asp_a, meta(i_min).asp_b,...
-                meta(i_max).snr,meta(i_max).name, meta(i_max).asp_a, meta(i_max).asp_b);
-            
+            if ~isempty(meta)
+                [meta(:).snr] = deal(signal_power{:});
+                [~,i_min] = min([meta.snr]); [~,i_max] = max([meta.snr]);
+                fprintf('от %01.1f(%s(%+03d,%+03d)\x00B0) до %01.1f(%s(%+03d,%+03d)\x00B0)\n',...
+                    meta(i_min).snr,meta(i_min).name, meta(i_min).asp_a, meta(i_min).asp_b,...
+                    meta(i_max).snr,meta(i_max).name, meta(i_max).asp_a, meta(i_max).asp_b);
+            else, warning('No metadata')
+            end            
             % временные сдвиги
             max_shift = dim_rp*(multiplier-1);      % максимальный временной сдвиг
             if(multiplier>1)
