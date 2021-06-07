@@ -23,6 +23,9 @@ classdef SystemModel < handle
         T_sampling_ns           % интервал дискретизации, нс
         f_imp_mhz               % полоса сигнала, МГц
         f_lpfilter_mhz          % полоса фильтра, МГц
+        
+        pca_coefs               % коэффициенты ПКЛ
+        ldca_coefs               % коэффициенты разностного ПКЛ
     end
         
     methods
@@ -35,6 +38,8 @@ classdef SystemModel < handle
             obj.scan_type = 'default';      % по умолчанию 
             obj.t_type = 'none';            % по умолчанию нет преобразования
             obj.wave_name = 'dtf2';         % по умолчанию комплексный вейвлет
+            obj.pca_coefs = [];
+            obj.ldca_coefs = [];
         end
         
         % загрузить ИХР одного объекта из icr файлов
@@ -216,12 +221,14 @@ classdef SystemModel < handle
         %   obj        
         %   rps         - матрица ячеек ДП
         %   [t_type]    - тип преобразования
-        %   [wave_name] - обозначение вейвлета
+        %   [wave_name] или [trgs] - обозначение вейвлета в случае ВП и целевой вектор в случае dca
             if nargin>=3;   t_type = varargin{1};   % тип преобразования
             else; t_type = obj.t_type; end 
             if any(strcmp(t_type, {'cwt', 'acwt', 'wt'}))
                 if nargin>=4;   wave_name = varargin{2};  % тип вейвлета
                 else;           wave_name = obj.wave_name; end
+            elseif any(strcmp(t_type, 'dpca'))
+                trgs = varargin{2};
             end
             switch t_type
                 case 'none'
@@ -236,12 +243,12 @@ classdef SystemModel < handle
                     tr = @(rp) RPTools.acwt(rp,wave_name);
                 case 'wt'   
                     tr = @(rp) RPTools.wt(rp,wave_name);
-%TODO: pca должен выполняться для всей выборки сразу и не может быть выполнен для каждого
-%объекта по отдельности
                 case 'pca'   
-                    tr = @(rp) RPTools.pca(rp);
+                    if isempty(obj.pca_coefs), obj.pca_coeffs = pca(rps); end
+                    tr = @(rp) rp*obj.pca_coefs;
                 case 'dpca'
-                    tr = @(x, y) obj.dpca(x,y);
+                    if isempty(obj.pca_coefs), [~, obj.ldca_coefs] = RPTools.ldca(rps, trgs); end
+                    tr = @(rp) rp*obj.ldca_coefs;
                 otherwise
                     error(['Неизвестный тип преобразования (', t_type, ')'])
             end
@@ -285,15 +292,19 @@ classdef SystemModel < handle
                 case 'wt'   
                     [fvs, coef_map] = RPTools.wt(rps,wave_name);
                 case 'pca'
-                    [fvs] = RPTools.pca(rps);
+                    if isempty(obj.pca_coefs), [~, obj.pca_coefs] = RPTools.pca(rps);
+                    end
+                    fvs = rps*obj.pca_coefs;
                     coef_map = size(fvs,2);
                 case 'dca'
-                    [fvs] = RPTools.dca(rps, trgs);
+                    if isempty(obj.ldca_coefs), [fvs, obj.ldca_coefs] = RPTools.ldca(rps, trgs);
+                    else, fvs = rps*obj.ldca_coefs;
+                    end
                     coef_map = size(fvs,2);
             end
             
         end
-        
+                
         % гистограммы внутренних метрик
         function [wms_counts] = wms_hcounts(~, fvs, hist_bins)
             n_obj = length(fvs);
@@ -345,7 +356,37 @@ classdef SystemModel < handle
             xlim([hist_bins(1) hist_bins(end)])
             ylim([0 max_count_val])
         end
-                
+        
+        % обучить ПКЛ
+        function [] = pca_train(obj, rps)
+        %pca_train Сформировать матрицу ПКЛ (АГК).
+            obj.pca_coeffs = pca(rps);
+        end
+        
+        % сбросить коэффициенты ПКЛ
+        function [] = pca_reset(obj, varargin)
+        %pca_clear Сбросить коэффициенты ПКЛ.
+        % Без аргументов - сбрасывает настройку ПКЛ, может быть передана матрица ПКЛ.
+            if nargin==1, obj.pca_coefs = [];
+            elseif nargin==2, obj.pca_coefs = varargin{1};
+            else, error('Wrong format of input for pca setting')
+            end
+        end
+        
+        function [] = ldca_train(obj, rps, trgs)
+        %pca_train Сформировать матрицу дифференциального ПКЛ (АГК).
+            [~, obj.pca_coeffs] = RPTools.ldca(rps,trgs);
+        end
+        
+        function [] = ldca_reset(obj, varargin)
+        %dca_clear Сбросить коэффициенты ПКЛ.
+        % Без аргументов - сбрасывает настройку ПКЛ, может быть передана матрица ПКЛ.
+            if nargin==1, obj.ldca_coefs = [];
+            elseif nargin==2, obj.ldca_coefs = varargin{1};
+            else, error('Wrong format of input for pca setting')
+            end
+        end
+        
     end
     
     methods(Access = public, Static = true)

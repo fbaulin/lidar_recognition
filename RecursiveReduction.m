@@ -216,6 +216,13 @@ classdef RecursiveReduction < handle
             end
         end
         
+        % Редукция для упорядоченных компонент, например ПКЛ
+        function [fspace_qs, fspace_map] = sequenced_selection(~, dimensions)
+            n_spaces = length(dimensions);  % число подпространств
+            fspace_qs = (1:n_spaces).';  % значения пороговой метрики для размерностей
+            fspace_map = tril(nspaces,-1); % матрица оптимальных пространств - по строкам от размерности
+        end
+        
         % Алгоритм поочередного удаления и добавления компонент
         function [fspace_qs, fspace_map] = add_del_reduction(obj, rho_estimate, dimensions)
             
