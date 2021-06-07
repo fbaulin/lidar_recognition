@@ -80,10 +80,10 @@ classdef Crossvalidation
                 'performance', 'default',...
                 'decision_mode', 'metric',...   % если 'metric', то решение принимается по метрике, иначе - по 
                 'use_gpu', 'no');
-            [   dset_folder_name, t_select_v, t_types, reduction_method, heuristic, n_metrics_fraction,...
-                k_alien, n_nearest, max_dim, step, imp_hwidth_ns, mse_noise, t_bfuns, ...
-                cv_method, cv_param, clf_type, clf_layers, clf_perf_score, decision_mode, use_gpu] ...
-                = kwargs.parse_input_cell(varargin);
+            [   dset_folder_name, t_select_v, t_types, reduction_method, heuristic, n_metrics_fraction, k_alien, ...
+                n_nearest, max_dim, step, imp_hwidth_ns, mse_noise, t_bfuns, cv_method, cv_param, ...
+                clf_type, clf_layers, clf_perf_score, decision_mode, use_gpu ...
+            ] = kwargs.parse_input_cell(varargin);
 
             if strcmp(t_types, 'legacy')
                 t_types = {'none'   'fft'   'afft'  'cwt'   'acwt'   'wt'    'pca' 'dca'};
@@ -103,7 +103,7 @@ classdef Crossvalidation
                 [ cv_method ...             исходная выборка
                 '_t' num2str(imp_hwidth_ns,'%02.1f') ...        t импульса
                 '_mse' num2str(max(mse_noise)) ...              СКО шума
-                '_' reduction_method num2str(red_param)...      метрик в штрафной зоне
+                '_' reduction_method num2str(red_param) ...      метрик в штрафной зоне
                 '_dim' num2str(step) '-' num2str(max_dim) ...   максимальная размерность
                 ]; 
             n_types = length(t_types);  % число преобразований
@@ -118,15 +118,15 @@ classdef Crossvalidation
                 % Кроссвалидация  
                 fprintf('(%s) %s\n', datetime('now','Format','HH:mm:ss'),[ 'Редукция ' t_type ]) 
                 qcheck = QualityCheck('dimensions',dimensions_init, ... % объект проверки качества
-                    'reduction_method', reduction_method,...
-                    'heuristic', heuristic,...
-                    'n_metrics_fraction',n_metrics_fraction,...
+                    'reduction_method', reduction_method, ...
+                    'heuristic', heuristic, ...
+                    'n_metrics_fraction',n_metrics_fraction, ...
                     'k_alien', k_alien, 'n_nearest', n_nearest );  
-                qcheck.setup_classifier( 'classifier_type',clf_type, 'performance',clf_perf_score,...
+                qcheck.setup_classifier( 'classifier_type',clf_type, 'performance',clf_perf_score, ...
                     'layers',clf_layers, 'decision_mode', decision_mode, 'gpu', use_gpu );
                 [ fs_perf, fs_chars, fs_maps, conf_mx ] = ...
                     Crossvalidation.cv_check(fvs, meta, qcheck, 'cv_method', cv_method, 'cv_param', cv_param);
-
+                
                 obj_names = cell(1, length(meta));
                 for i_o = 1:length(meta), obj_names{i_o} = meta{1,i_o}(1).name; end
                 % Сохранение
@@ -139,6 +139,170 @@ classdef Crossvalidation
                 fprintf('\tСохранен файл с результатами %s\n',output_file)
             end
         end
+        
+        function assess_fspaces(varargin)
+        %reduction Выполнение сравнительного анализа пространств признаков
+        %   Выполенение сравнительного анализа пространств признаков с
+        %   использованием перекрестной проверки и тестированием на
+        %   классификаторе. Базы векторов признаков загружаются из внешних файлов в
+        %   /dataset_folder_name/fvs, а сохраняются в /dataset_folder_name/results
+        %
+        %   Аргументы: 
+        %   имя, значение_по-умолчанию - описание
+        %   'dset_folder_name', 'test' - вектора признаков берутся будут взяты из папки dset_folder_name/fvs 
+        %   't_select_v', 1 - вектор в котором задаются идентификаторы преобразований                    
+        %   't_types', 'legacy" - список проверяемых преобразований
+        %   'reduction_method', 'prat' - метод редукции:
+        %                       prat - максимизация условной вероятности
+        %                       buryi - максимизировать минимальную метрику
+        %                       nmin - максимизировать n-ю метрику
+        %                       fisher - отбор методом Фишера
+        %   'heuristic', 'adddel' - метод перебора пространств признаков
+        %                       adddel - поочередное добавление и исключение признаков
+        %                       gray - перебор всех с кодированием признаков кодом Грея
+        %   'n_metrics_fraction', 0.03 -  доля метрик, для которых допустимо превышение
+        %   'n_nearest', 10- число ближайших соседей по которым оцениваются вероятности
+        %   'max_dim', 8   - максимальная проверяемая размерность 
+        %   'step', 1      - шаг с которым выполняется проход по размерностям
+        %   'imp_hwidth_ns', 1 - длительность ЗИ по половинному уровню, нс
+        %   'mse_noise', 0.019 - СКО аддитивного шума для исходных выборок ДП
+        %   't_bfuns', {{'x','x','x','dtf2','dtf2','sym5','x'}} - используемые базисные ф-ции
+        %   'cv_method', 'kfold' - тип проверки:
+        %                       kfold - перекрестная, 
+        %                       holdout - отложенная выборка 
+        %   'cv_param', 4 - число n выборок для проверки (при holdout - 1/n доля отлож. выборки)
+        %   'classifier', 'pnet' - тип классификатора: 
+        %                       pnet - НС с состязательным выходным слоем (см. patternnet()) 
+        %                       mlp - НС с линейным выходным слоем (см. feedforwardnet()) 
+        %   'layers', [ 8 4 ] - характеристика слоёв
+        %   'performance', 'default' - критерий оценки качества:
+        %                       default - оставить по умолчанию
+        %                       crossentropy - перекрестная энтропия (только для pnet) 
+        %                       mse - СКО выхода (только для mlp)
+        %   'use_gpu', 'no' - использовать видеоадаптер для ускорения вычислений
+        %   'test_files', 'false'
+            fprintf('(%s) %s\n', datetime('now','Format','HH:mm:ss'), ' ======= Запуск crossval_check =======')
+            get_value = @Crossvalidation.get_value;
+            cv_method = get_value(varargin, 'cv_method', 'kfold');
+            dset_folder_name = get_value(varargin, 'dset_folder_name', 'test');           
+            t_select_v = get_value(varargin, 't_select_v', 1);                      % маска выбора преобразований
+            t_types = get_value(varargin, 't_types', 'legacy');
+            reduction_method = get_value(varargin, 'reduction_method', 'prat');     % метод редукции пространства признаков
+            heuristic = get_value(varargin, 'heuristic', 'adddel');
+            n_metrics_fraction = get_value(varargin, 'n_metrics_fraction', 0.03);   % число метрик, для которых допустимо превышение
+            k_alien = get_value(varargin, 'k_alien', 3);
+            n_nearest = get_value(varargin, 'n_nearest', 10);
+            max_dim = get_value(varargin, 'max_dim', 8);
+            step = get_value(varargin, 'step', 1);
+            imp_hwidth_ns = get_value(varargin, 'imp_hwidth_ns', 1);                % продолжительность импульса по половинному уровню, нс
+            mse_noise = get_value(varargin, 'mse_noise', 0.00);
+            t_bfuns = get_value(varargin, 't_bfuns', {{'x','x','x','dtf2','dtf2','sym5','x'}});
+            clf_type = get_value(varargin, 'classifier', 'pnet');
+            clf_layers = get_value(varargin, 'layers', [ 8 4 ]);
+            clf_perf_score = get_value(varargin, 'performance', 'default');
+            decision_mode = get_value(varargin, 'decision_mode', 'metric');         % если 'metric', то решение принимается по метрике, иначе - по 
+            use_gpu = get_value(varargin, 'use_gpu', 'no');
+            test_files = get_value(varargin, 'test_files', 'open_files');                  % signature - берёт сигнатуру исходного и ищет такие же файлы, но с другим уровнем шума
+            
+            
+            if strcmp(t_types, 'legacy')
+                t_types = {'none'   'fft'   'afft'  'cwt'   'acwt'   'wt'    'pca' 'dca'};
+                t_types = t_types(t_select_v);  t_bfuns = t_bfuns(t_select_v);
+                warning('Этот метод ввода преобразования устаревший и скоро будет удален')
+            end
+
+            % Формирование сигнатуры исследования
+            switch reduction_method
+                case {'nmin', 'integrnmin', 'integrnmax'},        red_param = num2str(n_metrics_fraction);
+                case {'buryi', 'buryisum', 'integr', 'fisher','auhist', 'integr_min'},     red_param = '';
+                case {'minalien','prat','wprat','test'},   red_param = num2str(n_nearest);
+                case 'refmmin',                   red_param = [num2str(k_alien) 'of' num2str(n_nearest)];
+                otherwise,          error('Неизвестный метод редукции')
+            end
+            n_types = length(t_types);  % число преобразований
+            dimensions_init = 0:step:max_dim;
+            for i_type = 1:n_types
+            % Загрузка данных
+                t_type = t_types{i_type};   % текущий тип данных
+                t_bfun = t_bfuns{i_type};   % текщая базовая функция преобразования
+                fs_maps_file = [ dset_folder_name '/results/' ...
+                    cv_method ...             исходная выборка
+                    '_t' num2str(imp_hwidth_ns,'%02.1f') ...        t импульса
+                    '_mse' num2str(max(mse_noise)) ...              СКО шума
+                    '_' reduction_method num2str(red_param)...      метрик в штрафной зоне
+                    '_dim' num2str(step) '-' num2str(max_dim)  '_' t_type '_' t_bfun '.mat'];
+            % Настройка исследования
+                fprintf('(%s) %s\n', datetime('now','Format','HH:mm:ss'),[ 'Редукция ' t_type ]) 
+                qcheck = QualityCheck('dimensions',dimensions_init, ... % объект проверки качества
+                    'reduction_method', reduction_method,...
+                    'heuristic', heuristic,...
+                    'n_metrics_fraction',n_metrics_fraction,...
+                    'k_alien', k_alien, 'n_nearest', n_nearest, 'fs_map_file', fs_maps_file, 'save_clfs', true);  
+                qcheck.setup_classifier( 'classifier_type',clf_type, 'performance',clf_perf_score,...
+                    'layers',clf_layers, 'decision_mode', decision_mode, 'gpu', use_gpu );
+            % Обучающая выборка
+                train_filename = [ dset_folder_name '/fvs/' t_type '-' t_bfun ...
+                    '_t' num2str(imp_hwidth_ns,'%02.1f') '_mse' num2str(max(mse_noise)) '.mat'];
+                load(train_filename,'fvs','meta','feat_header');   % загрузить данные
+                
+                [ x_train, y_train ] = qcheck.unwrap_cell_data(fvs, meta, 'matrix_output', false); % сформировать выборку
+            % Формирование списка файлов векторов признаков
+                if test_files == "open_files"
+                    [test_files_list, path] = uigetfile('MultiSelect','on');
+                    test_files_list = cellfun(@(f) horzcat(path, f), test_files_list, 'UniformOutput', false);
+                elseif or(isa(test_files,'string'), isa(test_files,'string'))
+                    if test_files == "signature"
+                        fvs_signature = [ dset_folder_name '/fvs/' t_type '-' t_bfun ...
+                            '_t' num2str(imp_hwidth_ns,'%02.1f') '_mse*.mat'];      % маска, чтобы получить список файлов векторов признаков
+                        test_files_list = dir(fvs_signature);
+                        path = test_files_list.folder;
+                        test_files_list = cellfun(@(f) horzcat(path,'\',f), {test_files_list(:).name}.', 'UniformOutput', false);
+                    else
+                        test_files_list = {test_files};
+                    end
+                else
+                    path = test_files{1}(1:max(strfind(test_files{1},'\')));    % 
+                    test_files_list = test_files;
+                end
+                fprintf('\tTest dataset files:\n');
+                fprintf('\t\t%s,\n',test_files_list{:});  % вывод списка тестовых файлов
+                
+                fvs_signature = [ path '\' t_type '-' t_bfun ...
+                    '_t' num2str(imp_hwidth_ns,'%02.1f') '_mse' '%f' '.mat'];
+                noises = cellfun(@(f) ...
+                    sscanf( strrep(f,'\','/'), strrep(fvs_signature,'\','/')),...
+                    test_files_list, 'UniformOutput', false);
+                output_files = [ dset_folder_name '/results/' ...
+                    'keep' ...             исходная выборка
+                    '_t' num2str(imp_hwidth_ns,'%02.1f') ...        t импульса
+                    '_mse' '%g' ...              СКО шума
+                    '_' reduction_method num2str(red_param)...      метрик в штрафной зоне
+                    '_dim' num2str(step) '-' num2str(max_dim)  '_' t_type '_' t_bfun '.mat'];
+                output_files = cellfun(@(n) sprintf(output_files, n), noises, 'UniformOutput', false);
+                
+                for i_tfile = 1:length(test_files_list)   % пошли по файлам с разными шумами
+                    test_file = test_files_list{i_tfile};
+                    output_file = output_files{i_tfile};
+                    % Тестовый вайл векторов признаков
+                    load(test_file,'fvs','meta','feat_header');   % загрузить данные
+                    [ x_test, y_test ] = qcheck.unwrap_cell_data(fvs, meta, 'matrix_output', false); % сформировать выборку
+
+                    [ fs_perf, fs_chars, fs_maps, conf_mx ] = qcheck.assess_quality(x_train, y_train, x_test, y_test);
+                    % Сохранение
+                    obj_names = cell(1, length(meta));
+                    for i_o = 1:length(meta), obj_names{i_o} = meta{1,i_o}(1).name; end
+                    % Сохранение
+                    save(output_file, ...
+                        'fs_perf', 'fs_chars', 'fs_maps', 'feat_header', 'conf_mx', ...
+                        'obj_names', 't_type', 't_bfun', 'mse_noise', 'imp_hwidth_ns', 'reduction_method')
+                    fprintf('(%s) sep char: [%s]\n', datetime('now','Format','HH:mm:ss'),num2str(fs_chars.', '%6.3f '));
+                    fprintf('(%s) clf perf: [%s]\n', datetime('now','Format','HH:mm:ss'),num2str(fs_perf.', '%6.3f '));
+                    fprintf('\tСохранен файл с результатами %s\n',output_file);
+                end
+            end
+            fprintf('(%s)==== Оценка окончена ====\n', datetime('now','Format','HH:mm:ss'));
+        end
+        
                 
         function crossval_list_vis(filelist,varargin)
         %crossval_list_vis - визуализация результатов анализа
@@ -323,13 +487,15 @@ classdef Crossvalidation
         
         % реализация проверки на перекрестной выборке
         function [ fs_perf, fs_chars, varargout ] = cv_check(fvs, meta, qcheck, varargin)
-            kwargs = KeywordArguments('cv_method','kfold','cv_param',4);
+            kwargs = KeywordArguments(...
+                'cv_method',...
+                'kfold','cv_param',4);
             [cv_method, cv_param] = kwargs.parse_input_cell(varargin);
             if strcmp(cv_method,'holdout'), cv_param=1/cv_param; end    % если отложенная выборка, то пересчитать в долю
             [x,y] = qcheck.unwrap_cell_data(fvs, meta, 'matrix_output', false); % сформировать выборку
             cv_results = crossval(...
                 @(x_tn,y_tn,x_ts,y_ts)  Crossvalidation.eval_wrapper(qcheck,x_tn, y_tn, x_ts, y_ts),...
-                x,y,cv_method,cv_param);%'kfold',4);  % перекресная проверка качества
+                x,y,cv_method,cv_param);        % перекресная проверка качества
             switch nargout
                 case 3  
                     [ fs_perf, fs_chars, varargout{1} ] = ...
@@ -344,6 +510,7 @@ classdef Crossvalidation
         function [clf_perf_score, rho_min, varargout] = process_cv_results(cv_results)
             clf_perf_score_mx = horzcat(cv_results{:,1});
             fs_score_mx = horzcat(cv_results{:,2});
+            
             clf_perf_score = mean(clf_perf_score_mx, 2);            % качество классификации усредняется
 
             % выбирается подвыборка с наивысшим значением критерия отбора
@@ -357,12 +524,9 @@ classdef Crossvalidation
             end
             if nargout>=4   % если требуются матрицы ошибок
                 varargout{2} = sum(cat(4,cv_results{:,4}),4); % общие матрицы ошибок
-                
 %                 [~, ind_dim] = max(fs_score_max); % индекс оптимальной размерности (т.е. лучший случай вообще)
 %                 varargout{2} = cv_results{ best_fold(ind_dim),4};
-                
             end
-
             rho_min = fs_score_max;
 
         end
@@ -750,6 +914,29 @@ classdef Crossvalidation
             else, error('Неправильно введены параметры выбора признаков')
             end
         end
+        
+          % поиск значения именнованного параметра по его имени
+        function parameter_value = get_value(arg_in, parameter_name, varargin)
+        %get_value Функция выполняет поиск имени параметра и выводит его значение
+        %   Аргументы:
+        %   arg_in - массив ячеек с последовательно идущими именами и значениями параметров - можно вводить varargin
+        %   parameter_name - строковое значение имени параметра, значение которого требуется найти
+        %   varargin - третьим элементом может быть задано значение параметра по умолчанию.
+        %   KeywordArguments(varargin, 'Parameter_to_find', 69) % 69 будет присвоено, если параметра нет в varargin
+            i = find(strcmp(parameter_name,arg_in),1);
+            if isempty(i)
+                if nargin == 3
+                    parameter_value = varargin{1};
+                else 
+                    error(['Параметр ' parameter_name ' не найден в вводе'])
+                end
+            elseif length(i)==1
+                parameter_value = arg_in{i+1};    %
+            else
+                error(['Имя параметра ' parameter_name ' найдено несколько раз.'])
+            end
+        end
+        
     end
 end
 

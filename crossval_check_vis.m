@@ -27,7 +27,7 @@ t_names = t_names(t_select_v);
 switch reduction_method
     case 'mhist',       red_param = [num2str(n_metrics_fraction) '-' num2str(hist_max_value)];
     case {'nmin','integrnmin'},        red_param = num2str(n_metrics_fraction);
-    case {'buryi', 'fisher', 'auhist'},            red_param = '';
+    case {'buryi', 'fisher', 'auhist', 'integr'},            red_param = '';
     case {'minalien','prat','wprat'},    red_param = num2str(n_nearest);
     otherwise,          error('Неизвестный метод редукции')
 end

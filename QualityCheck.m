@@ -10,11 +10,12 @@ classdef QualityCheck < handle
         clf                 % классификатор, поддерживающий configure и train
         decision_mode       % принцип работы решающего устройства
         use_GPU = 'no'      % 
-        fs_map              % карта признаков
+        fs_map              % карта признаков или имя файла
         score_type          % тип меры качества распознавания
+        clf_pool            % обученные классификаторы
+        save_clfs           % 
         
         maps_filename       % имя файла с картами пространств признаков
-        
         batch_filename      % имя файла для сохранения 
         feature_header      % заголовок для файла
         
@@ -38,6 +39,7 @@ classdef QualityCheck < handle
         %       'layers',           - задать структуру скрытых слоев, [160 80 40].
         %       'dimensions'        - размерности, 1.
         %       'batch_filename'    - имя файла обучающей выборки, false.
+        %       'clf_pool_filename' - имя файла классификаторов.
         %       'maps_filename'     - имя файла с картами признаков,  false.
             kwargs = KeywordArguments(...
                 'reduction_method','nmin',...
@@ -50,7 +52,9 @@ classdef QualityCheck < handle
                 'm_technique','mean',...    % метод расчета
                 'k_alien',2, ...               % число своих
                 'n_metrics_fraction', 0.05,...
-                'hist_edges', linspace(0,2,51)...  
+                'hist_edges', linspace(0,2,51),...  
+                'fs_map_file', false, ...
+                'save_clfs', false...
                 );   % значения по-умолчанию
             [   obj.reduction_method, ...
                 obj.heuristic,...
@@ -62,7 +66,9 @@ classdef QualityCheck < handle
                 obj.m_technique,...
                 obj.k_alien,...
                 obj.n_metrics_fraction,... 
-                obj.hist_edges] = kwargs.parse_input_cell(varargin); 
+                obj.hist_edges,...
+                obj.fs_map,...
+                obj.save_clfs] = kwargs.parse_input_cell(varargin); 
             if strcmp(obj.classifier_type,'mlp')
                 obj.setup_classifier(...
                     'classifier_type',obj.classifier_type,...
@@ -118,6 +124,7 @@ classdef QualityCheck < handle
             end
             obj.clf.trainParam.showWindow = false;      % отключить окно со стат. обучения
             obj.clf.trainParam.showCommandLine = false; % отключить вывод в консоль
+            obj.clf_pool = {};    % сбросить классификаторы
             
         end
         
@@ -125,7 +132,7 @@ classdef QualityCheck < handle
         function [ x_train, y_train, x_test, y_test ] = prepare_dataset(obj, x_train, y_train_str, x_test, y_test_str)
             %NOTE: при выполненнии отбора признаков после нормировки данных
             % ошибки на распознавании оказываются выше, чем ошибки в случае
-            % выполнения нормировки после отбора данных. Это
+            % выполнения нормировки после отбора признаков. Это
             % свидетельствует о том, что при применении отбора признаков по
             % алгоритму nmin важно, чтобы СКО аддитивного шума было равным
             % для всех признаков (не путать с СКО самих признаков)
@@ -161,27 +168,26 @@ classdef QualityCheck < handle
         %       [rho_min]   - мера качества сформированного пространства признаков. 
         %       [fs_maps]   - карта соответствующего пространства признаков <n_dim x fv_dim>.
         %       [conf_mx]   - матрица ошибок для оптимальной размерности.
-
-%             fvs = obj.wrap_data(x_train,y_train_str);   % преобразовать данные в массив ячеек
-%             [rho_min, fs_maps,obj.dimensions] = SystemModel.fs_reduction(fvs,...
-%                 'dimensions',obj.dimensions, 'reduction_type',obj.reduction_method...
-%                 );   % подобрать оптимальное пространство признаков для заданной размерности
-
-            reduction = RecursiveReduction();
-            [rho_min, fs_maps,obj.dimensions] = reduction.reduce(x_train, y_train_str,...
-                'dimensions',obj.dimensions, 'reduction_type',obj.reduction_method,...
-                'heuristic',obj.heuristic,...
-                'n_metrics_fraction',obj.n_metrics_fraction,...
-                'hist_edges', obj.hist_edges,...
-                'n_nearest', obj.n_nearest,...
-                'm_technique', obj.m_technique,...
-                'k_alien',obj.k_alien);   % подобрать оптимальное пространство признаков для заданной размерности
+            if or(isa(obj.fs_map,'string'), isa(obj.fs_map,'char'))
+                load(obj.fs_map, 'fs_chars', 'fs_maps')
+                rho_min = fs_chars;
+%                 obj.dimensions = sum(fs_maps,2);
+            else
+                reduction = RecursiveReduction();
+                [rho_min, fs_maps, obj.dimensions] = reduction.reduce(x_train, y_train_str,...
+                    'dimensions',obj.dimensions, 'reduction_type',obj.reduction_method,...
+                    'heuristic',obj.heuristic,...
+                    'n_metrics_fraction',obj.n_metrics_fraction,...
+                    'hist_edges', obj.hist_edges,...
+                    'n_nearest', obj.n_nearest,...
+                    'm_technique', obj.m_technique,...
+                    'k_alien',obj.k_alien);   % подобрать оптимальное пространство признаков для заданной размерности
+            end
             
-            obj.fs_map = logical(fs_maps);      % преобразовать в логические для индексации
+            fs_map = logical(fs_maps);      % преобразовать в логические для индексации
             n_dims = length(rho_min);           % обновить число исследованных размерностей
             score = zeros(n_dims,1);            % вектор-столбец с оценкой рез-тата распознавания
             if nargout>=4, conf_mx = cell(n_dims,1); end        % матрица ошибок
-%             conf_mx = cell(length(fvs), length(fvs));
             % подготовка данных: в т.ч. нормализация
             [ x_train, y_train, x_test, y_test ] = obj.prepare_dataset(x_train, y_train_str, x_test, y_test_str);
             
@@ -190,12 +196,24 @@ classdef QualityCheck < handle
                 x_test = double(x_test);
             end
             n_arg_out = nargout;
+            % Проверка на существование обученных классификаторов и соответствие их числа заданной размерности 
+            if and(length(obj.clf_pool) == n_dims, obj.save_clfs)
+                clfs = obj.clf_pool;
+            else
+                clfs = cell(n_dims, 1);
+            end
+            
             parfor i_dim = 1:n_dims
-                x_train_red = x_train(:, obj.fs_map(i_dim,:));   %#ok<PFBNS> % редуцировать обучающую выборку
-                x_test_red = x_test(:, obj.fs_map(i_dim,:));     %#ok<PFBNS> % редуцировать тестовую выборку
+                x_train_red = x_train(:, fs_map(i_dim,:));   %#ok<PFBNS> % редуцировать обучающую выборку
+                x_test_red = x_test(:, fs_map(i_dim,:));     %#ok<PFBNS> % редуцировать тестовую выборку
                % обучить классификатор
-                inst_clf = configure(obj.clf,x_train_red.',y_train.');   % конф. входного и выходного слоёв
-                inst_clf = train(inst_clf,x_train_red.',y_train.','useGPU',obj.use_GPU);       % обучение
+                if ~isa(clfs{i_dim}, class(obj.clf))
+                    inst_clf = configure(obj.clf,x_train_red.',y_train.');   % конф. входного и выходного слоёв
+                    inst_clf = train(inst_clf,x_train_red.',y_train.','useGPU',obj.use_GPU);       % обучение
+                    clfs{i_dim} = inst_clf;
+                else 
+                    inst_clf = clfs{i_dim};
+                end
                 y_pred = inst_clf(x_test_red.').';                       % формирование ответов для тестовой выборки
                 score(i_dim) = perform(inst_clf, y_test.', y_pred.');    % расчет качества распознавания
                 if n_arg_out>=4
@@ -211,9 +229,10 @@ classdef QualityCheck < handle
             if nargout>=2, varargout{1} = rho_min; end      % если более одного арг - выдать rho_min
             if nargout>=3, varargout{2} = fs_maps; end      % если 3 аргумента выдать карту признаков
             if nargout>=4, varargout{3} = permute(cat(3,conf_mx{:}),[3 1 2]); end      % выдать матрицу ошибок
+            if nargout>=5, varargout{4} = clfs; end
+            obj.clf_pool = clfs;
         end
-        
-        
+                      
         
     end
     
@@ -256,7 +275,7 @@ classdef QualityCheck < handle
         %   
         %   Если расстояние до целевого вектора (one hot векторы) меньше порогового (по умолчанию (sqrt(2)/2), то
         %   вектор заменяется на соответствующий one-hot вектор, иначе - на нулевой вектор.
-            if nargin==2, thresh_sqr = sqrt(varargin{1}); else thresh_sqr = 1/2; end
+            if nargin==2, thresh_sqr = sqrt(varargin{1}); else, thresh_sqr = 1/2; end
             [n_samples, n_class] = size(y_pred);    % определить число классов
             y_dec = zeros(n_samples, n_class, 'like', y_pred);
             % цикл по классам 

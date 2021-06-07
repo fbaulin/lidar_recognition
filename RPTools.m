@@ -159,7 +159,6 @@ classdef RPTools
                     snap_index = RPTools.find_center(rand_rps);
                 case 'max_peak'     % характерная точка - глобальный максимум
                     [~, snap_index] = max(rand_rps,[],2);
-                    snap_index = snap_index+randn(n_rps,1)*1;
                 case 'none'         % ДП используются как есть
                     rps = rand_rps;
                     return
