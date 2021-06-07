@@ -94,7 +94,7 @@ classdef Crossvalidation
             % Формирование сигнатуры исследования
             switch reduction_method
                 case {'nmin', 'integrnmin', 'integrnmax'},        red_param = num2str(n_metrics_fraction);
-                case {'buryi', 'buryisum', 'integr', 'fisher','auhist', 'integr_min'},     red_param = '';
+                case {'buryi', 'buryisum', 'integr', 'fisher','auhist', 'integr_min', 'sequent'},     red_param = '';
                 case {'minalien','prat','wprat','test'},   red_param = num2str(n_nearest);
                 case 'refmmin',                   red_param = [num2str(k_alien) 'of' num2str(n_nearest)];
                 otherwise,          error('Неизвестный метод редукции')
@@ -216,7 +216,7 @@ classdef Crossvalidation
             % Формирование сигнатуры исследования
             switch reduction_method
                 case {'nmin', 'integrnmin', 'integrnmax'},        red_param = num2str(n_metrics_fraction);
-                case {'buryi', 'buryisum', 'integr', 'fisher','auhist', 'integr_min'},     red_param = '';
+                case {'buryi', 'buryisum', 'integr', 'fisher','auhist', 'integr_min', 'sequent'},     red_param = '';
                 case {'minalien','prat','wprat','test'},   red_param = num2str(n_nearest);
                 case 'refmmin',                   red_param = [num2str(k_alien) 'of' num2str(n_nearest)];
                 otherwise,          error('Неизвестный метод редукции')

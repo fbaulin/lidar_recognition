@@ -80,6 +80,8 @@ classdef RecursiveReduction < handle
                         obj.gray_reduction(obj.estimate_q, dimensions);
                 case 'fisher',              [fspace_qs, fspace_map] = ...
                         obj.fisher_selection(dimensions);
+                case 'sequential',          [fspace_qs, fspace_map] = ...
+                        obj.sequential_selection(dimensions);
                 otherwise, error('Ошибка выбора эвристического алгоритма редукции')
             end
             fprintf('%s: [ %s ]\n',obj.reduction,num2str(fspace_qs.', '%6.3f '));
@@ -136,6 +138,7 @@ classdef RecursiveReduction < handle
                     obj.refine_aliens(k_alien, n_nearest)
                     rho_estimate = @(t_map) obj.buryi(t_map);
                 case 'fisher',      obj.heurist = 'fisher';
+                case 'sequent',  obj.heurist = 'sequential';
                 
                 otherwise,      error('Неправильно задан метод редукции. Поддерживаемые: nmin, buryi, mhist, minalien')
             end
@@ -217,10 +220,10 @@ classdef RecursiveReduction < handle
         end
         
         % Редукция для упорядоченных компонент, например ПКЛ
-        function [fspace_qs, fspace_map] = sequenced_selection(~, dimensions)
+        function [fspace_qs, fspace_map] = sequential_selection(obj, dimensions)
             n_spaces = length(dimensions);  % число подпространств
             fspace_qs = (1:n_spaces).';  % значения пороговой метрики для размерностей
-            fspace_map = tril(nspaces,-1); % матрица оптимальных пространств - по строкам от размерности
+            fspace_map = tril(ones(n_spaces,length(obj.feat_map)),-1); % матрица оптимальных пространств - по строкам от размерности
         end
         
         % Алгоритм поочередного удаления и добавления компонент
