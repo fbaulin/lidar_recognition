@@ -266,6 +266,8 @@ classdef Crossvalidation
                     path = test_files{1}(1:max(strfind(test_files{1},'\')));    % 
                     test_files_list = test_files;
                 end
+                t_index = endsWith(test_files_list,replace(train_filename,'/','\'),'IgnoreCase',true);
+                if sum(t_index)==1, test_files_list(t_index)=[];  end       % удаление файла, используемого для обучения из тестовой выборки  
                 fprintf('\tTest dataset files:\n');
                 fprintf('\t\t%s,\n',test_files_list{:});  % вывод списка тестовых файлов
                 
