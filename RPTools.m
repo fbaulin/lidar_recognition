@@ -51,7 +51,7 @@ classdef RPTools
             % временные сдвиги
             max_shift = dim_rp*(multiplier-1);      % максимальный временной сдвиг
             if(multiplier>1)
-                fprintf('\tОкно случ сдвига: %1.1f длин исх\n', multiplier);
+                fprintf('\tОкно случ сдвига: %1.2f длин исх\n', multiplier);
                 r_start  = 1 + ...
                     (floor(max_shift * rand(total_samples,1))); % формирование матрицы со значениями случайных сдвигов 0.1*ones(total_samples,1))); 
             else
@@ -155,7 +155,7 @@ classdef RPTools
         %       max_peak    - по пику
         %   nc_offset   - размер исходного ДП. Определяет какой участок ДП
         %   в каждую сторону от точки привязки будет взят.
-            [n_rps, ~] = size(rand_rps);
+            [n_rps, dim_rps] = size(rand_rps);
             % Поиск характерной точки ДП для привязки
             switch snap_mode
                 case 'energy'       % характерная точка - центр тяжести
@@ -163,7 +163,7 @@ classdef RPTools
                 case 'max_peak'     % характерная точка - глобальный максимум
                     [~, snap_index] = max(rand_rps,[],2);
                 case 'none'         % ДП используются как есть
-                    rps = rand_rps(:,1:nc_window);
+                    rps = rand_rps(:,1:min(nc_window,dim_rps));
                     return
                 otherwise
                     error(['Метод ' snap_mode ' не поддерживается']);
