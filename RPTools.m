@@ -41,7 +41,7 @@ classdef RPTools
                 signal_power = num2cell(signal_power/max(sigma)^2); % считать худшее с/ш
             end
             if ~isempty(meta)
-                [meta(:).snr] = deal(signal_power{:});
+                [meta(:).snr] = signal_power{:};
                 [~,i_min] = min([meta.snr]); [~,i_max] = max([meta.snr]);
                 fprintf('от %01.1f(%s(%+03d,%+03d)\x00B0) до %01.1f(%s(%+03d,%+03d)\x00B0)\n',...
                     meta(i_min).snr,meta(i_min).name, meta(i_min).asp_a, meta(i_min).asp_b,...
@@ -51,7 +51,7 @@ classdef RPTools
             % временные сдвиги
             max_shift = dim_rp*(multiplier-1);      % максимальный временной сдвиг
             if(multiplier>1)
-                fprintf('\tОкно случ сдвига: %d длин исх\n', multiplier);
+                fprintf('\tОкно случ сдвига: %1.1f длин исх\n', multiplier);
                 r_start  = 1 + ...
                     (floor(max_shift * rand(total_samples,1))); % формирование матрицы со значениями случайных сдвигов 0.1*ones(total_samples,1))); 
             else
@@ -60,9 +60,10 @@ classdef RPTools
             r_stop   = r_start + dim_rp - 1;        % конечные индексы
             sigma_mix = (max(sigma)-min(sigma))*rand(total_samples,1,'like', rps)+...
                 min(sigma); % дисперсии равномерно распределены от сигма мин до сигма макс
-                        
-            rp_samples = randn( total_samples, dim_rp*multiplier, 'like', rps );    % шумовые в выборки
-            rp_samples = rp_samples .* sigma_mix;
+            % формирование выборок с реализациями шума (длина окна больше длины исходных ДП в целое
+            % число раз
+            rp_samples = randn( total_samples, dim_rp*ceil(multiplier), 'like', rps ); % ш. выборки
+            rp_samples = rp_samples .* sigma_mix;   % настройка СКО шума
             % Прибавляем к шумовым выборкам случайно сдвинутый портрет
             for i = 1 : total_samples               % цикл по всем реализациям
                 rp_samples(i, r_start(i):r_stop(i)) = ...
