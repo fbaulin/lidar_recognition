@@ -163,7 +163,7 @@ classdef RPTools
                 case 'max_peak'     % характерная точка - глобальный максимум
                     [~, snap_index] = max(rand_rps,[],2);
                 case 'none'         % ДП используются как есть
-                    rps = rand_rps;
+                    rps = rand_rps(:,1:nc_offset);
                     return
                 otherwise
                     error(['Метод ' snap_mode ' не поддерживается']);
