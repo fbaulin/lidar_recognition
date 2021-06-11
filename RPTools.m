@@ -894,6 +894,28 @@ classdef RPTools
 %             objAxe.XDir = 'reverse';
             objAxe.GridLineStyle = ':';
         end
+        
+        % поиск значения именнованного параметра по его имени
+        function parameter_value = get_value(arg_in, parameter_name, varargin)
+        %get_value Функция выполняет поиск имени параметра и выводит его значение
+        %   Аргументы:
+        %   arg_in - массив ячеек с последовательно идущими именами и значениями параметров - можно вводить varargin
+        %   parameter_name - строковое значение имени параметра, значение которого требуется найти
+        %   varargin - третьим элементом может быть задано значение параметра по умолчанию.
+        %   KeywordArguments(varargin, 'Parameter_to_find', 69) % 69 будет присвоено, если параметра нет в varargin
+            i = find(strcmp(parameter_name,arg_in),1);
+            if isempty(i)
+                if nargin == 3
+                    parameter_value = varargin{1};
+                else 
+                    error(['Параметр ' parameter_name ' не найден в вводе'])
+                end
+            elseif length(i)==1
+                parameter_value = arg_in{i+1};    %
+            else
+                error(['Имя параметра ' parameter_name ' найдено несколько раз.'])
+            end
+        end
                 
     end
     
