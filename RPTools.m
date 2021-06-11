@@ -146,7 +146,7 @@ classdef RPTools
         end
         
         % Устранить временную неопределенность
-        function rps = rp_time_snap( rand_rps, snap_mode, nc_window )
+        function rps = rp_time_snap( rand_rps, snap_mode, nc_window, varargin )
         %RP_TIME_SNAP
         %   Устранить временную неоднозначность
         %   rand_rps    - матрица ДП по строкам
@@ -155,6 +155,9 @@ classdef RPTools
         %       max_peak    - по пику
         %   nc_offset   - размер исходного ДП. Определяет какой участок ДП
         %   в каждую сторону от точки привязки будет взят.
+            
+            random_shift = RPTools.get_value(varargin, 'random_shift', 0);
+            shift_mode = RPTools.get_value(varargin, 'shift_law', 'none');
             [n_rps, dim_rps] = size(rand_rps);
             % Поиск характерной точки ДП для привязки
             switch snap_mode
@@ -168,7 +171,18 @@ classdef RPTools
                 otherwise
                     error(['Метод ' snap_mode ' не поддерживается']);
             end
-            
+            % Иммитация некачественной работы алгоритма
+            switch shift_mode
+                case 'Uniform'
+                    snap_index = snap_index+round((rand(n_rps, 1)-0.5)*random_shift);
+                case 'Normal' 
+                    snap_index = snap_index+round(randn(n_rps, 1)*random_shift);
+                case 'none'
+                otherwise,warning('Неизвестный вид распределения')
+            end
+            snap_index(snap_index<0)=0; 
+            snap_index(snap_index>dim_rps)=dim_rps;
+                
             rps = zeros(n_rps, nc_window, 'like',rand_rps);   % подготовить матрицу под ДП
             rand_rps = [...
                 zeros(n_rps,floor(nc_window/2),'like',rand_rps), ...
