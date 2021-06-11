@@ -146,7 +146,7 @@ classdef RPTools
         end
         
         % Устранить временную неопределенность
-        function rps = rp_time_snap( rand_rps, snap_mode, nc_offset )
+        function rps = rp_time_snap( rand_rps, snap_mode, nc_window )
         %RP_TIME_SNAP
         %   Устранить временную неоднозначность
         %   rand_rps    - матрица ДП по строкам
@@ -163,19 +163,19 @@ classdef RPTools
                 case 'max_peak'     % характерная точка - глобальный максимум
                     [~, snap_index] = max(rand_rps,[],2);
                 case 'none'         % ДП используются как есть
-                    rps = rand_rps(:,1:nc_offset);
+                    rps = rand_rps(:,1:nc_window);
                     return
                 otherwise
                     error(['Метод ' snap_mode ' не поддерживается']);
             end
             
-            rps = zeros(n_rps, 2*nc_offset, 'like',rand_rps);   % подготовить матрицу под ДП
+            rps = zeros(n_rps, nc_window, 'like',rand_rps);   % подготовить матрицу под ДП
             rand_rps = [...
-                zeros(n_rps,nc_offset,'like',rand_rps), ...
+                zeros(n_rps,floor(nc_window/2),'like',rand_rps), ...
                 rand_rps, ...
-                zeros(n_rps,nc_offset,'like',rand_rps)];        % дополнить выборку на случай выхода за пределы
+                zeros(n_rps,ceil(nc_window/2),'like',rand_rps)];        % дополнить выборку на случай выхода за пределы
             start = snap_index + 1;         %
-            stop = snap_index + 2*nc_offset;
+            stop = snap_index + nc_window;
             for i = 1:n_rps
                 rps(i,:) = rand_rps( i, start(i):stop(i) );
             end
