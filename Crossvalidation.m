@@ -197,7 +197,7 @@ classdef Crossvalidation
             max_dim = get_value(varargin, 'max_dim', 8);
             step = get_value(varargin, 'step', 1);
             imp_hwidth_ns = get_value(varargin, 'imp_hwidth_ns', 1);                % продолжительность импульса по половинному уровню, нс
-            mse_noise = get_value(varargin, 'mse_noise', 0.00);
+            mse_noise_tr = get_value(varargin, 'mse_noise', 0.00);
             t_bfuns = get_value(varargin, 't_bfuns', {{'x','x','x','dtf2','dtf2','sym5','x'}});
             clf_type = get_value(varargin, 'classifier', 'pnet');
             clf_layers = get_value(varargin, 'layers', [ 8 4 ]);
@@ -230,7 +230,7 @@ classdef Crossvalidation
                 fs_maps_file = [ dset_folder_name '/results/' ...
                     cv_method ...             исходная выборка
                     '_t' num2str(imp_hwidth_ns,'%02.1f') ...        t импульса
-                    '_mse' num2str(max(mse_noise)) ...              СКО шума
+                    '_mse' num2str(max(mse_noise_tr)) ...              СКО шума
                     '_' reduction_method num2str(red_param)...      метрик в штрафной зоне
                     '_dim' num2str(step) '-' num2str(max_dim)  '_' t_type '_' t_bfun '.mat'];
             % Настройка исследования
@@ -244,7 +244,7 @@ classdef Crossvalidation
                     'layers',clf_layers, 'decision_mode', decision_mode, 'gpu', use_gpu );
             % Обучающая выборка
                 train_filename = [ dset_folder_name '/fvs/' t_type '-' t_bfun ...
-                    '_t' num2str(imp_hwidth_ns,'%02.1f') '_mse' num2str(max(mse_noise)) '.mat'];
+                    '_t' num2str(imp_hwidth_ns,'%02.1f') '_mse' num2str(max(mse_noise_tr)) '.mat'];
                 load(train_filename,'fvs','meta','feat_header');   % загрузить данные
                 
                 [ x_train, y_train ] = qcheck.unwrap_cell_data(fvs, meta, 'matrix_output', false); % сформировать выборку
@@ -296,6 +296,7 @@ classdef Crossvalidation
                     obj_names = cell(1, length(meta));
                     for i_o = 1:length(meta), obj_names{i_o} = meta{1,i_o}(1).name; end
                     % Сохранение
+                    mse_noise = noises{i_tfile};
                     save(output_file, ...
                         'fs_perf', 'fs_chars', 'fs_maps', 'feat_header', 'conf_mx', ...
                         'obj_names', 't_type', 't_bfun', 'mse_noise', 'imp_hwidth_ns', 'reduction_method')
@@ -706,16 +707,21 @@ classdef Crossvalidation
             xticks(datastruct(i_file).('dimensions'))
             legend(curve_h,leg_str)
             title(['P_{err} (' tit_str ')'])
-            Crossvalidation.save_p_err(p_err_cmx, leg_str);
+            Crossvalidation.save_p_err(p_err_cmx, leg_str, num2str(mean([datastruct.mse_noise])));
         end
         
-        function save_p_err(p_err_cells,leg_str)
+        function save_p_err(p_err_cells,leg_str, suffix)
             curve_sizes = cellfun(@length, p_err_cells);
             if length(unique(curve_sizes))==1
                 p_err_mx = horzcat(p_err_cells{:});
-                save('p_err.mat','p_err_mx', 'leg_str');
+            else
+                max_dim = max(curve_sizes);
+                p_err_mx = NaN(max_dim, length(curve_sizes));
+                for i = 1:length(curve_sizes)
+                    p_err_mx(1:curve_sizes(i), i) = p_err_cells{i};
+                end
             end
-            
+            save(['p_err_' suffix '.mat'],'p_err_mx', 'leg_str');
         end
         
         % Visualize confusion matricies
