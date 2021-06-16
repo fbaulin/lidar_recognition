@@ -244,7 +244,7 @@ classdef SystemModel < handle
                 case 'wt'   
                     tr = @(rp) RPTools.wt(rp,wave_name);
                 case 'pca'   
-                    if isempty(obj.pca_coefs), obj.pca_coeffs = pca(rps); end
+                    if isempty(obj.pca_coefs), obj.pca_coefs = pca(rps); end
                     tr = @(rp) rp*obj.pca_coefs;
                 case 'dpca'
                     if isempty(obj.pca_coefs), [~, obj.ldca_coefs] = RPTools.ldca(rps, trgs); end
@@ -360,7 +360,7 @@ classdef SystemModel < handle
         % обучить ПКЛ
         function [] = pca_train(obj, rps)
         %pca_train Сформировать матрицу ПКЛ (АГК).
-            obj.pca_coeffs = pca(rps);
+            obj.pca_coefs = pca(rps);
         end
         
         % сбросить коэффициенты ПКЛ
