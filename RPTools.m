@@ -621,6 +621,75 @@ classdef RPTools
             signal = ifft(rec_spectre, n_dim, 2);
         end
         
+        % Обратное КВП
+        function [ RPArray ] = icwt( InData, wavenm )
+        %fDTCWT Комплексное вейвлет преобразование по методу кингсбери
+        %   Функция выполняет комплексное вейвлет-преобразование массива данных на 
+        %   своем входе используя метод Кингсбёри 
+        %   Преобразование является избыточным и формирует на выходе число
+        %   отсчетов в 2^m раз превышающее число отсчетов на входе
+        %NOTE: Точность восстановления сигнала с единичной амплитудой ~10e-6 
+        %значения отклонений в значительной мере коррелируют со значениями
+        %амплитудно временных отсчетов ДП
+            [ nObj,nDim ] = size(InData);   % размерность
+            rpDim = nDim/2; % размерность ДП
+            % сформировать структуру вейвлет дерева
+            wt.type = 'cplxdt';             % тип дерева
+            declvl = RPTools.cwt_props(nDim/2,wavenm);
+            wt.level = declvl;              % уровень разложения
+            [~,recfilt] = dtfilters(wavenm);% пролучить фильтры
+            filters.FRf = recfilt{1};
+            filters.Rf  = recfilt{2}; 
+            wt.filters = filters;
+            wt.cfs = cell(1,declvl+1);
+            RPArray = zeros(nObj,rpDim); 
+            for iObj = 1:nObj
+                % перевод ВЧ коэффициентов
+                indexLst = 0;
+                for iLvl = 1:declvl
+                    nCfs = rpDim/2^(iLvl);          % число коэффициентов для уровня
+                    indexFst = indexLst + 1 ;       % индекс первого эл-та
+                    indexLst = indexFst + nCfs - 1; % индекс последн эл-та
+                    wt.cfs{iLvl} = shiftdim(...
+                        [ InData(iObj, indexFst:indexLst) ...
+                        ; InData(iObj, rpDim + indexFst : rpDim + indexLst) ].'...
+                        , -1);  % форм. матрицы и добавление "технологической" размерности
+                end
+                % перевод НЧ коэф-тов
+                indexFst = indexLst + 1;
+                indexLst = indexFst + rpDim/2^declvl - 1;
+                wt.cfs{declvl+1} = shiftdim(...
+                    [ InData(iObj, indexFst:indexLst) ...
+                    ; InData(iObj, rpDim + indexFst : rpDim + indexLst) ].'...
+                    , -1);  % форм. матрицы и добавление "технологической" размерности
+                RPArray(iObj,:) = idddtree(wt);      % выполнить преоборазование
+            end
+        end
+        
+        % Размерность вектора КВП и максимальный уровень разложения
+        function [ declvl, newDim ] = cwt_props (nDim, wavenm)
+        %FCWTPROPS Рассчитывает уровень разложения и требуемую размерность
+        %   На основании передаваемой размерности вектора сигнала и имени
+        %   вейвлета рассчитывает ближайшую (сверху) размерность сигнала, 
+        %   требуемую для вычисления DTCWT. Подробно выбор размерности
+        %   описан в мануале к функции dddtree.
+            decfilt = dtfilters(wavenm);    % получение коэф фильтра по названию
+            filtMaxLen = max([...
+                size(decfilt{1}{1},1) size(decfilt{1}{2},1)...
+                size(decfilt{2}{1},1) size(decfilt{2}{2},1)]);  % определение максимальной длины фильтров
+            % определение уровня разложения
+            declvl = floor(log2(nDim/filtMaxLen)+1);    % уровень разложения по условию x_len>=flen*2^(L-1)
+            newDim = 2^declvl * ceil(nDim/2^declvl);    % новая размерность 
+            % print map
+%             cwtData = dddtree('cplxdt',zeros(1,newDim),declvl,wavenm);
+%             fprintf('Схема коэффициентов КВП: ВЧ ')
+%                 for i=1:length(cwtData.cfs)
+%                     fprintf('%d ',length(cwtData.cfs{i}))
+%                 end
+%             fprintf('НЧ\n')
+        end
+        
+                     
         % PCA
         function [varargout] = pca(rps, varargin)
         %pca Преобразование Карунена-Лоэва
