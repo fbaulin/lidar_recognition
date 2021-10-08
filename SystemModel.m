@@ -6,7 +6,6 @@ classdef SystemModel < handle
     properties
                 
         window_m = 3;           % максимальная протяженность объекта
-        icr_dim = 200;          % число отсчетов в ИХР
         hwidth2sig = 2.35;      % множитель для перевода сигмы в длину по половинному уровню
         resol_ns                % условное разрешение ИХР
         rp_dim
@@ -25,15 +24,20 @@ classdef SystemModel < handle
         f_lpfilter_mhz          % полоса фильтра, МГц
         
         pca_coefs               % коэффициенты ПКЛ
-        ldca_coefs               % коэффициенты разностного ПКЛ
+        ldca_coefs              % коэффициенты разностного ПКЛ
     end
         
     methods
         
         % конструктор
-        function obj = SystemModel() 
+        function obj = SystemModel(varargin) 
             
-            obj.resol_ns = obj.window_m * 2 / obj.icr_dim / 3e8 * 1e9;      % условное временное разрешение ИХР, нс
+            obj.window_m = obj.get_value(varargin,'max_range_m',3);
+            obj.resol_ns = obj.get_value(varargin,'icr_resolution_ns', 0.1);
+            
+            icr_dim = obj.window_m * 2 / obj.resol_ns / 3e8 * 1e9;      % условное временное разрешение ИХР, нс
+            obj.resol_ns = obj.window_m * 2 / round(icr_dim) / 3e8 * 1e9;
+            
             obj.obj_lst ={ 'brk3x1' 'con2x1','con3x1','cyl3x1','sph3x1' };
             obj.scan_type = 'default';      % по умолчанию 
             obj.t_type = 'none';            % по умолчанию нет преобразования
@@ -59,9 +63,10 @@ classdef SystemModel < handle
                 end
                 [icrs, meta] = RPTools.open_icr_file(...
                     {filelist(1:end).name}.');              % получить ИХР и метаданные
-                if size(icrs,2)~=obj.icr_dim
-                    warning(['Число отсчетов в ИХР не равно ' num2str(obj.icr_dim)]);
-                end
+%TODO: Удалить излишнюю проверку на число отсчётов в ИХР
+%                 if size(icrs,2)~=obj.icr_dim
+%                     warning(['Число отсчетов в ИХР не равно ' num2str(obj.icr_dim)]);
+%                 end
                 icrs_db_filename = [filelist(i).folder '\' meta(1).name '.mat'];
                 save(icrs_db_filename,'icrs','meta');
                 disp(['Сохранение базы ИХР в ' icrs_db_filename]);
@@ -388,18 +393,20 @@ classdef SystemModel < handle
         end
         
     end
-    
+    %TODO: Перенести в отдельный модуль все методы, которые не имеют отношения к самой модели ЛЛС
     methods(Access = public, Static = true)
         
-        % Сформировать ДП
-        function [rps, meta] = generate_rps(icr_folder, gauss_hwidth)
+        % Сформировать ДП на основе пути к папке с ИХР (привязаны к формату данных)
+        function [rps, meta] = generate_rps(icr_folder, gauss_hwidth, varargin)
         %GENERATE_RPS Сформировать ДП на основании ИХР
             %   Аргументы:
             %   icr_folder -    - Папка с ИХР
             %   obj_id          - Имя для БД
-            
-            dim_icr = 200;      % число отсчетов в ИХР
-            window_m = 3;       % длина интервала измерений, м.
+            %   Именованные аргументы:
+            %   'n',200         - число отсчётов в ИХР файле
+            %   'window_m'      - длительность окна (максимальная длительность ИХР)
+            dim_icr =   SystemModel.get_value(varargin,'n',200);      % число отсчетов в ИХР
+            window_m =  SystemModel.get_value(varargin,'window_m',3);       % длина интервала измерений, м.
             resol_ns = window_m * 2 / dim_icr / 3e8 * 1e9;  % условное временное разрешение ИХР, нс
             % Загрузка ИХР
             filelist = dir([icr_folder '/*.icr']);        % получить структуру списка файлов из заданной папки
@@ -976,6 +983,32 @@ classdef SystemModel < handle
                     q_sep = sum((sum(neq_matrix, 2)>(k_alien)))/n_samples;
             end
             cur_rho = 1 - q_sep;
+        end
+        
+    end
+    
+    methods(Access=private, Static=true)
+                
+        % поиск значения именнованного параметра по его имени
+        function parameter_value = get_value(arg_in, parameter_name, varargin)
+        %get_value Функция выполняет поиск имени параметра и выводит его значение
+        %   Аргументы:
+        %   arg_in - массив ячеек с последовательно идущими именами и значениями параметров - можно вводить varargin
+        %   parameter_name - строковое значение имени параметра, значение которого требуется найти
+        %   varargin - третьим элементом может быть задано значение параметра по умолчанию.
+        %   KeywordArguments(varargin, 'Parameter_to_find', 69) % 69 будет присвоено, если параметра нет в varargin
+            i = find(strcmp(parameter_name,arg_in),1);
+            if isempty(i)
+                if nargin == 3
+                    parameter_value = varargin{1};
+                else 
+                    error(['Параметр ' parameter_name ' не найден в вводе'])
+                end
+            elseif length(i)==1
+                parameter_value = arg_in{i+1};    %
+            else
+                error(['Имя параметра ' parameter_name ' найдено несколько раз.'])
+            end
         end
         
     end
